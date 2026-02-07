@@ -135,12 +135,16 @@ def _find_polya_anchors(
             if run_len < min_run:
                 continue
 
-            # Check density in a window around the run
-            win_start = max(0, start - density_window // 2)
-            win_end = min(n, i + density_window // 2)
-            window_seq = seq[win_start:win_end]
-            if at_density(window_seq) < density_threshold:
-                continue
+            # For long runs the signal is already unambiguous.
+            # Only apply the density check to borderline runs (< 2× min_run)
+            # to avoid rejecting genuine poly-A tails that happen to sit
+            # next to GC-rich sequence.
+            if run_len < int(min_run * 1.5):
+                win_start = max(0, start - density_window // 2)
+                win_end = min(n, i + density_window // 2)
+                window_seq = seq[win_start:win_end]
+                if at_density(window_seq) < density_threshold:
+                    continue
 
             # Exclude hits at read ends (those are normal poly-A tails)
             if start < five_prime_tol:
