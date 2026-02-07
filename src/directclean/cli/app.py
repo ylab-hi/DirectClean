@@ -1,0 +1,234 @@
+"""
+DirectClean command-line interface.
+
+Single-command design — no subcommands::
+
+    directclean -i reads.fastq -r genome.fa -o results/ -t 8
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from pathlib import Path
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.logging import RichHandler
+
+from directclean import __version__
+from directclean.pipeline import DirectCleanPipeline, PipelineConfig
+from directclean.rescuer.adaptor_seq import AdapterConfig
+from directclean.filter.homopolymer import HomopolymerConfig
+
+console = Console()
+
+app = typer.Typer(
+    name="directclean",
+    help=(
+        "DirectClean — Remove RT artifacts from Oxford Nanopore "
+        "Direct-cDNA sequencing data."
+    ),
+    add_completion=False,
+    no_args_is_help=True,
+)
+
+
+def _setup_logging(verbose: bool) -> None:
+    """Configure logging with Rich handler."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(
+            console=console,
+            show_path=False,
+            rich_tracebacks=True,
+        )],
+    )
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"DirectClean v{__version__}")
+        raise typer.Exit()
+
+
+# ---------------------------------------------------------------------------
+# Main command
+# ---------------------------------------------------------------------------
+
+@app.callback(invoke_without_command=True)
+def main(
+    # ---- Required ----
+    input_fastq: Path = typer.Option(
+        ...,
+        "--input", "-i",
+        help="Input FASTQ file (from Breakinator + Restrander).",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    reference: Path = typer.Option(
+        ...,
+        "--reference", "-r",
+        help="Reference genome FASTA file.",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output", "-o",
+        help="Output directory for results.",
+    ),
+
+    # ---- General ----
+    threads: int = typer.Option(
+        4,
+        "--threads", "-t",
+        help="Number of threads for minimap2 and samtools.",
+        min=1,
+    ),
+    prefix: str = typer.Option(
+        "directclean",
+        "--prefix", "-p",
+        help="Filename prefix for output files.",
+    ),
+
+    # ---- Stage control ----
+    skip_rescue: bool = typer.Option(
+        False,
+        "--skip-rescue",
+        help="Skip the Rescuer stage (internal adapter chopping).",
+    ),
+    skip_filter: bool = typer.Option(
+        False,
+        "--skip-filter",
+        help="Skip the Homopolymer Filter stage.",
+    ),
+
+    # ---- Rescuer parameters ----
+    max_edit_distance: int = typer.Option(
+        3,
+        "--max-edit-dist",
+        help="Maximum edit distance for adapter fuzzy matching.",
+        min=0,
+        max=5,
+    ),
+    min_confidence: int = typer.Option(
+        2,
+        "--min-confidence",
+        help="Minimum signals (1-3) to chop: 1=TSO only, 2=two of polyA/RTP/TSO, 3=all three.",
+        min=1,
+        max=3,
+    ),
+    min_segment_length: int = typer.Option(
+        50,
+        "--min-segment-len",
+        help="Minimum sub-read length to keep after chopping (bp).",
+        min=10,
+    ),
+
+    # ---- Homopolymer filter parameters ----
+    scan_window: int = typer.Option(
+        10,
+        "--scan-window",
+        help="Sliding window size for A/T density scan (bp).",
+        min=5,
+    ),
+    density_threshold: float = typer.Option(
+        0.8,
+        "--density-threshold",
+        help="Minimum A/T fraction in scanning window to flag.",
+        min=0.5,
+        max=1.0,
+    ),
+    min_run: int = typer.Option(
+        3,
+        "--min-run",
+        help="Minimum consecutive A or T to flag.",
+        min=2,
+    ),
+    context_window: int = typer.Option(
+        30,
+        "--context-window",
+        help="Bases to extract on each side of a junction.",
+        min=10,
+    ),
+
+    # ---- Flags ----
+    verbose: bool = typer.Option(
+        False,
+        "--verbose", "-v",
+        help="Enable debug logging.",
+    ),
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version", "-V",
+        help="Show version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """
+    Remove RT artifacts from Oxford Nanopore Direct-cDNA sequencing data.
+
+    DirectClean processes FASTQ files through two stages:
+
+    1. RESCUE: Detect internal TSO/RTP adapters and chop chimeric reads
+       into independent sub-reads.
+
+    2. FILTER: Align reads with minimap2, then identify and remove
+       chimeric junctions caused by RT template switching at poly-A/T
+       homopolymer regions.
+    """
+    _setup_logging(verbose)
+
+    # Build configuration from CLI options
+    adapter_cfg = AdapterConfig(
+        max_edit_distance=max_edit_distance,
+        min_segment_length=min_segment_length,
+    )
+    homopolymer_cfg = HomopolymerConfig(
+        scan_window=scan_window,
+        density_threshold=density_threshold,
+        min_run=min_run,
+        context_window=context_window,
+    )
+    pipeline_cfg = PipelineConfig(
+        adapter_config=adapter_cfg,
+        homopolymer_config=homopolymer_cfg,
+        min_confidence=min_confidence,
+        context_window=context_window,
+        threads=threads,
+        skip_rescue=skip_rescue,
+        skip_filter=skip_filter,
+    )
+
+    # Run pipeline
+    try:
+        pipeline = DirectCleanPipeline(
+            input_fastq=input_fastq,
+            reference=reference,
+            output_dir=output_dir,
+            config=pipeline_cfg,
+            prefix=prefix,
+        )
+        report = pipeline.run()
+
+        console.print()
+        console.print("[bold green]✓ DirectClean completed successfully.[/]")
+        console.print(f"  Cleaned reads: [cyan]{pipeline.cleaned_fastq}[/]")
+        console.print(f"  Removed reads: [cyan]{pipeline.removed_fastq}[/]")
+
+    except FileNotFoundError as e:
+        console.print(f"[bold red]Error:[/] {e}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/] {e}")
+        if verbose:
+            console.print_exception()
+        raise typer.Exit(code=1)

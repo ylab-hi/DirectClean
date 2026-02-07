@@ -1,0 +1,1 @@
+"""DirectClean CLI package."""
