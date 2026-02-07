@@ -5,10 +5,17 @@ description = "Remove RT artifacts from Direct-cDNA sequencing"
 authors = ["Qingxiang Guo <qingxiang.guo@northwestern.edu>"]
 license = "MIT"
 readme = "README.md"
+packages = [{include = "directclean", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
+pysam = ">=0.21.0"
+biopython = ">=1.81"
+typer = {extras = ["all"], version = ">=0.9.0"}
+rich = ">=13.0.0"
 
+[tool.poetry.scripts]
+directclean = "directclean.cli.app:app"
 
 [build-system]
 requires = ["poetry-core"]
