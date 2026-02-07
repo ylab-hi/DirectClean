@@ -1,0 +1,2 @@
+read_id	verdict	n_junctions	n_artifact_junctions	junction_details
+be0c346b-41c5-478a-9931-4ffd194dfcfd	ARTIFACT	2	2	chr6:24650842(-)->chr2:135769774(+)|pos=560|up_hit=True(d=0.90,run=5)|dn_hit=True(d=0.90,run=9)|artifact=True;chr2:135769774(+)->chrX:67729576(+)|pos=1656|up_hit=True(d=0.90,run=5)|dn_hit=True(d=0.80,run=6)|artifact=True
