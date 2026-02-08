@@ -28,7 +28,9 @@ app = typer.Typer(
     name="directclean",
     help=(
         "DirectClean — Remove RT artifacts from Oxford Nanopore "
-        "Direct-cDNA sequencing data."
+        "Direct-cDNA sequencing data.\n\n"
+        "Processes raw FASTQ through five stages: "
+        "Breakinator → Restrander → Rescuer → Minimap2 → Homopolymer Filter."
     ),
     add_completion=False,
     no_args_is_help=True,
@@ -66,7 +68,7 @@ def main(
     input_fastq: Path = typer.Option(
         ...,
         "--input", "-i",
-        help="Input FASTQ file (from Breakinator + Restrander).",
+        help="Raw input FASTQ file from Oxford Nanopore Direct-cDNA sequencing.",
         exists=True,
         dir_okay=False,
         readable=True,
@@ -89,7 +91,7 @@ def main(
     threads: int = typer.Option(
         4,
         "--threads", "-t",
-        help="Number of threads for minimap2 and samtools.",
+        help="Number of threads for minimap2, samtools, and breakinator.",
         min=1,
     ),
     prefix: str = typer.Option(
@@ -98,16 +100,17 @@ def main(
         help="Filename prefix for output files.",
     ),
 
-    # ---- Stage control ----
-    skip_rescue: bool = typer.Option(
-        False,
-        "--skip-rescue",
-        help="Skip the Rescuer stage (internal adapter chopping).",
-    ),
-    skip_filter: bool = typer.Option(
-        False,
-        "--skip-filter",
-        help="Skip the Homopolymer Filter stage.",
+    # ---- Breakinator parameters ----
+    junc_bed: Optional[Path] = typer.Option(
+        None,
+        "--junc-bed", "-j",
+        help=(
+            "Junction BED12 file for guided minimap2 alignment "
+            "(used by Breakinator stage). Recommended: GENCODE annotation."
+        ),
+        exists=True,
+        dir_okay=False,
+        readable=True,
     ),
 
     # ---- Rescuer parameters ----
@@ -121,7 +124,10 @@ def main(
     min_confidence: int = typer.Option(
         2,
         "--min-confidence",
-        help="Minimum signals (1-3) to chop: 1=TSO only, 2=two of polyA/RTP/TSO, 3=all three.",
+        help=(
+            "Minimum signals (1-3) to chop: "
+            "1=TSO only, 2=two of polyA/RTP/TSO, 3=all three."
+        ),
         min=1,
         max=3,
     ),
@@ -176,14 +182,15 @@ def main(
     """
     Remove RT artifacts from Oxford Nanopore Direct-cDNA sequencing data.
 
-    DirectClean processes FASTQ files through two stages:
+    DirectClean processes raw FASTQ files through five stages:
 
-    1. RESCUE: Detect internal TSO/RTP adapters and chop chimeric reads
-       into independent sub-reads.
-
-    2. FILTER: Align reads with minimap2, then identify and remove
-       chimeric junctions caused by RT template switching at poly-A/T
-       homopolymer regions.
+    \b
+    1. BREAKINATOR:  Remove foldback inversion artifacts.
+    2. RESTRANDER:   Correct strand orientation, trim primers.
+    3. RESCUER:      Detect internal TSO/RTP adapters, chop chimeric reads.
+    4. MINIMAP2:     Splice-aware alignment to reference genome.
+    5. FILTER:       Remove chimeric junctions caused by RT template
+                     switching at poly-A/T homopolymer regions.
     """
     _setup_logging(verbose)
 
@@ -204,8 +211,7 @@ def main(
         min_confidence=min_confidence,
         context_window=context_window,
         threads=threads,
-        skip_rescue=skip_rescue,
-        skip_filter=skip_filter,
+        junc_bed=junc_bed,
     )
 
     # Run pipeline

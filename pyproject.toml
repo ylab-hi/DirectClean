@@ -6,6 +6,7 @@ authors = ["Qingxiang Guo <qingxiang.guo@northwestern.edu>"]
 license = "MIT"
 readme = "README.md"
 packages = [{include = "directclean", from = "src"}]
+include = ["src/directclean/external/configs/*.json"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
