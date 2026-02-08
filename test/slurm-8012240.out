@@ -1,0 +1,103 @@
+DirectClean v0.1.0 starting
+  Input:     mini.fastq
+  Reference: /gpfs/projects/b1171/qgn1237/1_my_database/GRCh38_p13/GRCh38.p13.genome.fa
+  Output:    test_output
+  Threads:   8
+==================================================
+Stage 1: Rescue — internal adapter detection
+==================================================
+Wrote 8 records to test_output/directclean.rescued.fastq
+Rescue complete.
+
+=== DirectClean Rescue Report ===
+  Total reads processed   : 5
+  Reads with internal adpt: 2 (40.0%)
+  Reads passed unchanged  : 3
+  ---
+  Segments rescued        : 5
+  Segments discarded      : 0
+  Total output reads      : 8
+=================================
+==================================================
+Stage 2: Minimap2 — splice-aware alignment
+==================================================
+[minimap2] minimap2 -Y -ax splice -uf -k14 --secondary=no --cs -t 8 -R @RG\tID:directclean_direct_cDNA\tSM:directclean\tLB:lib\tPL:ONT /gpfs/projects/b1171/qgn1237/1_my_database/GRCh38_p13/GRCh38.p13.genome.fa test_output/directclean.rescued.fastq
+[samtools sort] samtools sort -@ 8 -O BAM -o test_output/directclean.aligned.sorted.bam -
+[samtools index] samtools index test_output/directclean.aligned.sorted.bam
+Alignment complete: test_output/directclean.aligned.sorted.bam
+==================================================
+Stage 3: Homopolymer Filter — RT artifact removal
+==================================================
+Phase 1: scanning BAM for homopolymer artifacts ...
+BAM scan complete: 3 chimeric reads, 2 artifacts
+Phase 2: splitting FASTQ ...
+Split test_output/directclean.rescued.fastq: 6 kept, 2 removed
+Writing report to test_output/directclean.homopolymer_report.tsv
+Homopolymer filter complete.
+
+=== DirectClean Homopolymer Filter Report ===
+  Chimeric reads examined : 3
+  Artifact reads          : 2 (66.7%)
+  Clean chimeric reads    : 1
+  Total junctions         : 4
+  Artifact junctions      : 3
+  ---
+  Input FASTQ reads       : 8
+  Kept reads              : 6
+  Removed reads           : 2
+==============================================
+
+╔══════════════════════════════════════════════╗
+║       DirectClean Pipeline Report            ║
+╚══════════════════════════════════════════════╝
+
+=== DirectClean Rescue Report ===
+  Total reads processed   : 5
+  Reads with internal adpt: 2 (40.0%)
+  Reads passed unchanged  : 3
+  ---
+  Segments rescued        : 5
+  Segments discarded      : 0
+  Total output reads      : 8
+=================================
+
+=== DirectClean Homopolymer Filter Report ===
+  Chimeric reads examined : 3
+  Artifact reads          : 2 (66.7%)
+  Clean chimeric reads    : 1
+  Total junctions         : 4
+  Artifact junctions      : 3
+  ---
+  Input FASTQ reads       : 8
+  Kept reads              : 6
+  Removed reads           : 2
+==============================================
+
+  Total elapsed time: 79.4s
+╔══════════════════════════════════════════════╗
+║       DirectClean Pipeline Report            ║
+╚══════════════════════════════════════════════╝
+
+=== DirectClean Rescue Report ===
+  Total reads processed   : 5
+  Reads with internal adpt: 2 (40.0%)
+  Reads passed unchanged  : 3
+  ---
+  Segments rescued        : 5
+  Segments discarded      : 0
+  Total output reads      : 8
+=================================
+
+=== DirectClean Homopolymer Filter Report ===
+  Chimeric reads examined : 3
+  Artifact reads          : 2 (66.7%)
+  Clean chimeric reads    : 1
+  Total junctions         : 4
+  Artifact junctions      : 3
+  ---
+  Input FASTQ reads       : 8
+  Kept reads              : 6
+  Removed reads           : 2
+==============================================
+
+  Total elapsed time: 79.4s

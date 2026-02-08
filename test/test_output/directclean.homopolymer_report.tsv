@@ -1,0 +1,4 @@
+read_id	verdict	n_junctions	n_artifact_junctions	junction_details
+ee1c318e-bf25-453d-823b-f88e516c2e1d	CLEAN	1	0	chr1:172923(-)->chr1:181034(+)|pos=1610|up_hit=False(d=0.50,run=2)|dn_hit=False(d=0.57,run=2)|artifact=False
+be0c346b-41c5-478a-9931-4ffd194dfcfd	ARTIFACT	2	2	chr6:24650842(-)->chr2:135769774(+)|pos=560|up_hit=True(d=0.90,run=5)|dn_hit=True(d=0.90,run=9)|artifact=True;chr2:135769774(+)->chrX:67729576(+)|pos=1656|up_hit=True(d=0.90,run=5)|dn_hit=True(d=0.80,run=6)|artifact=True
+0e3246e8-70b1-49e5-8e8d-415d17fc8da4_part2	ARTIFACT	1	1	chr10:46033304(+)->chr10:46033304(-)|pos=390|up_hit=True(d=0.80,run=3)|dn_hit=True(d=0.80,run=3)|artifact=True
