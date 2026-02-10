@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,15 +46,21 @@ class RestranderReport:
         forward:          Reads classified as forward (already 5'→3').
         reverse:          Reads classified as reverse (flipped to 5'→3').
         unknown:          Reads that could not be classified (excluded).
-        artefacts:        Reads with aberrant primer configs (excluded).
+        rtp_rtp:          RTP-RTP artefacts (excluded).
+        tso_tso:          TSO-TSO artefacts (excluded).
         output_reads:     Reads in the output FASTQ (forward + reverse).
     """
     total_input: int = 0
     forward: int = 0
     reverse: int = 0
     unknown: int = 0
-    artefacts: int = 0
+    rtp_rtp: int = 0
+    tso_tso: int = 0
     output_reads: int = 0
+
+    @property
+    def total_artefacts(self) -> int:
+        return self.rtp_rtp + self.tso_tso
 
     def __str__(self) -> str:
         pct_kept = (
@@ -61,16 +68,22 @@ class RestranderReport:
             if self.total_input > 0 else "N/A"
         )
         pct_artefact = (
-            f"{self.artefacts / self.total_input * 100:.1f}%"
+            f"{self.total_artefacts / self.total_input * 100:.1f}%"
+            if self.total_input > 0 else "N/A"
+        )
+        pct_unknown = (
+            f"{self.unknown / self.total_input * 100:.1f}%"
             if self.total_input > 0 else "N/A"
         )
         return (
             "=== Restrander Report ===\n"
             f"  Total input reads       : {self.total_input:,}\n"
-            f"  Forward (5'→3')         : {self.forward:,}\n"
-            f"  Reverse (flipped)       : {self.reverse:,}\n"
-            f"  Unknown (excluded)      : {self.unknown:,}\n"
-            f"  Artefacts (excluded)    : {self.artefacts:,} ({pct_artefact})\n"
+            f"  Forward (+)             : {self.forward:,}\n"
+            f"  Reverse (-)             : {self.reverse:,}\n"
+            f"  Unknown (?)             : {self.unknown:,} ({pct_unknown})\n"
+            f"  Artefacts               : {self.total_artefacts:,} ({pct_artefact})\n"
+            f"    RTP-RTP               : {self.rtp_rtp:,}\n"
+            f"    TSO-TSO               : {self.tso_tso:,}\n"
             f"  ---\n"
             f"  Output reads            : {self.output_reads:,} ({pct_kept})\n"
             "========================="
@@ -81,12 +94,38 @@ class RestranderReport:
 # Stats parser
 # ---------------------------------------------------------------------------
 
-def _parse_restrander_output(raw_output: str) -> RestranderReport:
-    """Parse Restrander's JSON statistics output.
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text.
 
-    Restrander writes a JSON object to stdout with classification
-    counts.  The format varies slightly between versions, so we
-    parse defensively.
+    Restrander outputs coloured log messages mixed with JSON.
+    We need to strip these before parsing.
+    """
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def _parse_restrander_output(raw_output: str) -> RestranderReport:
+    """Parse Restrander's JSON statistics from its stdout.
+
+    Restrander output format (after stripping ANSI codes)::
+
+        Restrander initialised.
+        Input file  : ...
+        ...
+        {
+            "stats": {
+                "artefactStats": {
+                    "RTP-RTP": 992122,
+                    "TSO-TSO": 22696,
+                    "no artefact": 3899743
+                },
+                "strandStats": {
+                    "+": 1286044,
+                    "-": 2102154,
+                    "?": 1526363
+                },
+                "totalReads": 4914561
+            }
+        }
 
     Args:
         raw_output: Combined stdout+stderr from Restrander.
@@ -96,52 +135,63 @@ def _parse_restrander_output(raw_output: str) -> RestranderReport:
     """
     report = RestranderReport()
 
-    # Try to find and parse JSON in the output
-    # Restrander may print log messages before the JSON
-    json_str = None
+    # Step 1: strip ANSI colour codes
+    cleaned = _strip_ansi(raw_output)
+
+    # Step 2: find the LAST JSON object by scanning from the end
+    # The JSON stats block is always at the tail of the output
     brace_depth = 0
     json_start = -1
+    json_end = -1
 
-    for i, ch in enumerate(raw_output):
-        if ch == "{":
+    for i in range(len(cleaned) - 1, -1, -1):
+        if cleaned[i] == "}":
+            if brace_depth == 0:
+                json_end = i
+            brace_depth += 1
+        elif cleaned[i] == "{":
+            brace_depth -= 1
             if brace_depth == 0:
                 json_start = i
-            brace_depth += 1
-        elif ch == "}":
-            brace_depth -= 1
-            if brace_depth == 0 and json_start >= 0:
-                json_str = raw_output[json_start:i + 1]
                 break
 
-    if json_str is None:
+    if json_start < 0 or json_end < 0:
         logger.warning(
-            "Could not parse Restrander JSON output. "
+            "Could not find JSON in Restrander output. "
             "Statistics will be unavailable."
         )
         return report
 
+    json_str = cleaned[json_start:json_end + 1]
+
     try:
         data = json.loads(json_str)
-    except json.JSONDecodeError:
-        logger.warning(f"Invalid JSON from Restrander: {json_str[:200]}")
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON from Restrander: {e}")
+        logger.debug(f"JSON string was: {json_str[:500]}")
         return report
 
-    # Restrander output keys (may vary by version)
-    # Common keys: "forward", "reverse", "unknown", "artefact"/"artefacts"
-    report.forward = data.get("forward", data.get("Forward", 0))
-    report.reverse = data.get("reverse", data.get("Reverse", 0))
-    report.unknown = data.get("unknown", data.get("Unknown", 0))
-    report.artefacts = (
-        data.get("artefacts", 0)
-        or data.get("artefact", 0)
-        or data.get("Artefacts", 0)
-        or data.get("Artefact", 0)
-    )
-    report.total_input = (
-        report.forward + report.reverse
-        + report.unknown + report.artefacts
-    )
+    # Step 3: extract stats from the actual Restrander format
+    stats = data.get("stats", data)
+
+    # Strand stats: {"+": N, "-": N, "?": N}
+    strand_stats = stats.get("strandStats", {})
+    report.forward = strand_stats.get("+", 0)
+    report.reverse = strand_stats.get("-", 0)
+    report.unknown = strand_stats.get("?", 0)
+
+    # Artefact stats: {"RTP-RTP": N, "TSO-TSO": N, "no artefact": N}
+    artefact_stats = stats.get("artefactStats", {})
+    report.rtp_rtp = artefact_stats.get("RTP-RTP", 0)
+    report.tso_tso = artefact_stats.get("TSO-TSO", 0)
+
+    # Total reads
+    report.total_input = stats.get("totalReads", 0)
+
+    # Output = forward + reverse (unknowns and artefacts are excluded)
     report.output_reads = report.forward + report.reverse
+
+    logger.debug(f"Parsed Restrander stats: {data}")
 
     return report
 
