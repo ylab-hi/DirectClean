@@ -5,6 +5,10 @@ Takes the junction sites detected by AdapterFinder and produces
 rescued sub-reads as independent FASTQ records.  Short fragments
 below a configurable threshold are discarded.
 
+Supports multi-process parallelism via ``--threads``: reads are
+split into chunks, each chunk processed in a separate worker, and
+results are merged in order.
+
 Output naming convention::
 
     Original:  read_001
@@ -14,9 +18,11 @@ Output naming convention::
 from __future__ import annotations
 
 import logging
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Tuple
 
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -30,6 +36,9 @@ from directclean.rescuer.adapter_finder import (
 from directclean.utils.io import read_fastq, write_fastq
 
 logger = logging.getLogger(__name__)
+
+# Default chunk size: number of reads per worker task
+_DEFAULT_CHUNK_SIZE = 5000
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +84,19 @@ class RescueReport:
             "================================="
         )
 
+    def merge(self, other: RescueReport) -> None:
+        """Merge another report into this one (for combining worker results)."""
+        self.total_reads += other.total_reads
+        self.reads_with_internal += other.reads_with_internal
+        self.reads_without += other.reads_without
+        self.total_segments += other.total_segments
+        self.segments_rescued += other.segments_rescued
+        self.segments_discarded += other.segments_discarded
+        self.details.extend(other.details)
+
 
 # ---------------------------------------------------------------------------
-# Chopper
+# Core chopping logic (pure functions, safe for multiprocessing)
 # ---------------------------------------------------------------------------
 
 def _chop_record(
@@ -139,17 +158,97 @@ def _chop_record(
     return segments, discarded
 
 
+def _process_chunk(
+    chunk_data: List[Tuple[str, str, List[int]]],
+    config_dict: dict,
+    min_confidence: int,
+) -> Tuple[List[Tuple[str, str, str, List[int]]], RescueReport, List[FinderResult]]:
+    """Process a chunk of reads in a worker process.
+
+    We pass raw data (not SeqRecord) across process boundaries to
+    avoid pickling issues with BioPython objects.
+
+    Args:
+        chunk_data:     List of (read_id, sequence, quality_scores).
+        config_dict:    AdapterConfig as dict (for pickling).
+        min_confidence: Minimum confidence to chop.
+
+    Returns:
+        (output_records, partial_report, finder_details)
+        where output_records is list of (id, seq, description, quals).
+    """
+    config = AdapterConfig(**config_dict)
+    finder = AdapterFinder(config)
+
+    report = RescueReport()
+    output_records = []
+    details = []
+
+    for read_id, sequence, quals in chunk_data:
+        report.total_reads += 1
+
+        # Detect internal adapters
+        finder_result = finder.find(read_id=read_id, sequence=sequence)
+
+        # Filter junctions by confidence
+        qualified = [
+            j for j in finder_result.junctions
+            if j.confidence >= min_confidence
+        ]
+
+        if not qualified:
+            # No internal adapter — pass through unchanged
+            report.reads_without += 1
+            report.total_segments += 1
+            output_records.append((read_id, sequence, "", quals))
+        else:
+            # Chop the read
+            report.reads_with_internal += 1
+            details.append(finder_result)
+
+            # Build boundaries
+            boundaries = [0]
+            for junc in qualified:
+                boundaries.append(junc.chop_position)
+            boundaries.append(len(sequence))
+
+            for i in range(len(boundaries) - 1):
+                start = boundaries[i]
+                end = boundaries[i + 1]
+                seg_len = end - start
+
+                if seg_len < config.min_segment_length:
+                    report.segments_discarded += 1
+                    continue
+
+                seg_id = f"{read_id}_part{i + 1}"
+                seg_seq = sequence[start:end]
+                seg_desc = f"rescued_from={read_id} start={start} end={end}"
+                seg_quals = quals[start:end] if quals else []
+
+                report.segments_rescued += 1
+                report.total_segments += 1
+                output_records.append((seg_id, seg_seq, seg_desc, seg_quals))
+
+    return output_records, report, details
+
+
+# ---------------------------------------------------------------------------
+# Chopper class
+# ---------------------------------------------------------------------------
+
 class ReadChopper:
     """Chop reads at internal adapter junctions and write rescued FASTQ.
 
     Combines AdapterFinder (detection) with chopping logic and FASTQ
-    I/O into a single entry point.
+    I/O into a single entry point.  Supports multi-process parallelism.
 
     Usage::
 
         chopper = ReadChopper(
             input_fastq="restranded.fastq",
             output_fastq="rescued.fastq",
+            threads=8,
         )
         report = chopper.run()
         print(report)
@@ -159,8 +258,9 @@ class ReadChopper:
         output_fastq:  Path for output FASTQ with rescued reads.
         config:        AdapterConfig with detection parameters.
         min_confidence: Minimum confidence level to chop (1, 2, or 3).
-                        Default 2 means polyA-only hits are ignored.
         report_path:   Optional path for a per-read TSV report.
+        threads:       Number of worker processes (1 = single-threaded).
+        chunk_size:    Reads per worker task.
     """
 
     def __init__(
@@ -170,33 +270,57 @@ class ReadChopper:
         config: AdapterConfig | None = None,
         min_confidence: int = 2,
         report_path: Optional[str | Path] = None,
+        threads: int = 1,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
     ) -> None:
         self.input_fastq = Path(input_fastq)
         self.output_fastq = Path(output_fastq)
         self.config = config or AdapterConfig()
         self.min_confidence = min_confidence
         self.report_path = Path(report_path) if report_path else None
-
-        self.finder = AdapterFinder(self.config)
+        self.threads = max(1, threads)
+        self.chunk_size = chunk_size
 
         # Ensure output directory exists
         self.output_fastq.parent.mkdir(parents=True, exist_ok=True)
 
-    def run(self) -> RescueReport:
-        """Process the entire FASTQ and write rescued output.
+    def _load_chunks(self) -> List[List[Tuple[str, str, List[int]]]]:
+        """Load FASTQ into chunks of serialisable tuples.
 
-        Returns:
-            RescueReport with statistics.
+        Returns list of chunks, where each chunk is a list of
+        (read_id, sequence, quality_scores) tuples.
         """
+        chunks = []
+        current_chunk = []
+
+        for record in read_fastq(self.input_fastq):
+            read_id = record.id
+            sequence = str(record.seq)
+            quals = record.letter_annotations.get("phred_quality", [])
+            current_chunk.append((read_id, sequence, quals))
+
+            if len(current_chunk) >= self.chunk_size:
+                chunks.append(current_chunk)
+                current_chunk = []
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
+
+    def _run_single_thread(self) -> RescueReport:
+        """Original single-threaded processing (for threads=1)."""
         report = RescueReport()
         all_output_records: List[SeqRecord] = []
+
+        finder = AdapterFinder(self.config)
 
         for record in read_fastq(self.input_fastq):
             report.total_reads += 1
             sequence = str(record.seq)
 
             # Detect internal adapters
-            finder_result = self.finder.find(
+            finder_result = finder.find(
                 read_id=record.id,
                 sequence=sequence,
             )
@@ -208,12 +332,10 @@ class ReadChopper:
             ]
 
             if not qualified:
-                # No internal adapter — pass through unchanged
                 report.reads_without += 1
                 report.total_segments += 1
                 all_output_records.append(record)
             else:
-                # Chop the read
                 report.reads_with_internal += 1
                 report.details.append(finder_result)
 
@@ -226,10 +348,83 @@ class ReadChopper:
                 report.total_segments += len(segments)
                 all_output_records.extend(segments)
 
-        # Write output
         write_fastq(all_output_records, self.output_fastq)
+        return report
 
-        # Write optional report
+    def _run_parallel(self) -> RescueReport:
+        """Multi-process parallel processing."""
+        logger.info(
+            f"Rescuer: parallel mode with {self.threads} workers, "
+            f"chunk_size={self.chunk_size:,}"
+        )
+
+        # Load all reads into serialisable chunks
+        chunks = self._load_chunks()
+        total_reads = sum(len(c) for c in chunks)
+        logger.info(
+            f"Rescuer: {total_reads:,} reads split into "
+            f"{len(chunks)} chunks"
+        )
+
+        # Prepare config as dict for pickling
+        config_dict = {
+            k: v for k, v in self.config.__dict__.items()
+        }
+
+        # Submit chunks to worker pool
+        # We use a dict to maintain chunk order
+        merged_report = RescueReport()
+        ordered_results: dict[int, List[Tuple]] = {}
+
+        with ProcessPoolExecutor(max_workers=self.threads) as executor:
+            future_to_idx = {}
+            for idx, chunk in enumerate(chunks):
+                future = executor.submit(
+                    _process_chunk,
+                    chunk,
+                    config_dict,
+                    self.min_confidence,
+                )
+                future_to_idx[future] = idx
+
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                output_records, partial_report, details = future.result()
+                ordered_results[idx] = output_records
+                merged_report.merge(partial_report)
+                merged_report.details.extend(details)
+
+        # Reconstruct SeqRecords in original order and write
+        all_output_records: List[SeqRecord] = []
+        for idx in range(len(chunks)):
+            for (rec_id, rec_seq, rec_desc, rec_quals) in ordered_results[idx]:
+                record = SeqRecord(
+                    seq=Seq(rec_seq),
+                    id=rec_id,
+                    name=rec_id,
+                    description=rec_desc,
+                )
+                if rec_quals:
+                    record.letter_annotations["phred_quality"] = rec_quals
+                all_output_records.append(record)
+
+        write_fastq(all_output_records, self.output_fastq)
+        return merged_report
+
+    def run(self) -> RescueReport:
+        """Process the entire FASTQ and write rescued output.
+
+        Uses multi-process parallelism when threads > 1.
+
+        Returns:
+            RescueReport with statistics.
+        """
+        if self.threads <= 1:
+            report = self._run_single_thread()
+        else:
+            report = self._run_parallel()
+
+        # Write optional TSV report
         if self.report_path is not None:
             self._write_report(report)
 
