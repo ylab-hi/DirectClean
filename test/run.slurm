@@ -4,7 +4,7 @@
 #SBATCH --partition=genomics
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=8
-#SBATCH --time=1:00:00
+#SBATCH --time=00:10:00
 #SBATCH --mem=50G
 
 cd $SLURM_SUBMIT_DIR

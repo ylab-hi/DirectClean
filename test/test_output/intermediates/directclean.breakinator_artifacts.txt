@@ -1,0 +1,6 @@
+#Break1_chr	Break1_loc	Break_direction	Break2_chr	Break2_loc	MapQ	Read_ID	Classification
+chr6	24650842	<>	chr2	135769774	60	be0c346b-41c5-478a-9931-4ffd194dfcfd	Chimeric
+chr2	135783081	>>	chrX	67729576	60	be0c346b-41c5-478a-9931-4ffd194dfcfd	Chimeric
+chr1	19658452	>>	chr10	46033304	60	0e3246e8-70b1-49e5-8e8d-415d17fc8da4	Chimeric
+chr10	46038991	><	chr10	46033551	60	0e3246e8-70b1-49e5-8e8d-415d17fc8da4	Pass
+chr3	9893850	>>	chr7	133356454	60	bb8b1dc3-67a2-4c3c-a1bd-59b1f6668b3b	Chimeric
