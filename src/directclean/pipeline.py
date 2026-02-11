@@ -298,7 +298,7 @@ class DirectCleanPipeline:
             config=self.config.adapter_config,
             min_confidence=self.config.min_confidence,
             report_path=self._reports_dir / f"{self.prefix}.rescue_report.tsv",
-            threads=self.config.threads,
+            threads=1,
         )
         report = chopper.run()
         return self._rescued_fastq, report
