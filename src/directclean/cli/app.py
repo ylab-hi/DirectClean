@@ -153,7 +153,7 @@ def main(
         max=1.0,
     ),
     min_run: int = typer.Option(
-        3,
+        5,
         "--min-run",
         help="Minimum consecutive A or T to flag.",
         min=2,
@@ -228,7 +228,7 @@ def main(
         console.print()
         console.print("[bold green]✓ DirectClean completed successfully.[/]")
         console.print(f"  Cleaned reads: [cyan]{pipeline.cleaned_fastq}[/]")
-        console.print(f"  Removed reads: [cyan]{pipeline.removed_fastq}[/]")
+        console.print(f"  Rescued reads: [cyan]{pipeline.rescued_fastq}[/]")
 
     except FileNotFoundError as e:
         console.print(f"[bold red]Error:[/] {e}")

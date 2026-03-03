@@ -42,19 +42,19 @@ class HomopolymerConfig:
         density_threshold:  Minimum A/T fraction within a scanning window
                             to count as a hit (default 0.8).
         min_run:            Minimum consecutive A or T to count as a hit
-                            (default 3).
+                            (default 5).
         context_window:     Already applied in junction_parser when
                             extracting upstream/downstream — stored here
                             for bookkeeping (default 30 bp).
         require_both_sides: If True, both upstream AND downstream must
                             hit to call an artifact.  If False, either
-                            side hitting is sufficient (default False).
+                            side hitting is sufficient (default True).
     """
     scan_window: int = 10
     density_threshold: float = 0.8
-    min_run: int = 3
+    min_run: int = 5
     context_window: int = 30
-    require_both_sides: bool = False
+    require_both_sides: bool = True
 
 
 # ---------------------------------------------------------------------------

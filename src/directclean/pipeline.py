@@ -22,13 +22,14 @@ Chains all five processing stages::
         Splice-aware alignment to reference genome
         │
         ▼
-    Stage 5: Homopolymer Filter
-        Identify and remove RT template switching artifacts
+    Stage 5: Homopolymer Rescue
+        Detect RT template switching junctions → chop and rescue
         │
         ▼
     Final outputs:
-        cleaned.fastq   — reads passing all stages
-        removed.fastq    — artifact reads from homopolymer filter
+        cleaned.fastq   — all reads passing stages 1-2, plus rescued
+                           sub-reads from stages 3 and 5
+        rescued.fastq    — sub-reads rescued by homopolymer chopping
         reports/         — per-stage reports
 """
 
@@ -98,7 +99,7 @@ class PipelineReport:
         break_report:      Report from Breakinator (Stage 1).
         restrander_report: Report from Restrander (Stage 2).
         rescue_report:     Report from Rescuer (Stage 3).
-        filter_report:     Report from Homopolymer Filter (Stage 5).
+        filter_report:     Report from Homopolymer Rescue (Stage 5).
         elapsed_seconds:   Total wall-clock time.
     """
     break_report: Optional[BreakReport] = None
@@ -144,7 +145,14 @@ class DirectCleanPipeline:
     """End-to-end DirectClean pipeline.
 
     Processes raw Direct-cDNA FASTQ through all five stages:
-    Breakinator → Restrander → Rescuer → Minimap2 → Homopolymer Filter.
+    Breakinator → Restrander → Rescuer → Minimap2 → Homopolymer Rescue.
+
+    Stages 1-2 (Breakinator, Restrander) may **remove** reads that are
+    definitively artifactual (foldback inversions, invalid primer configs).
+
+    Stages 3 and 5 (Rescuer, Homopolymer Rescue) never remove reads —
+    they **chop** chimeric reads at artifact junctions and rescue the
+    flanking sub-reads, increasing the effective read count.
 
     Usage::
 
@@ -227,8 +235,9 @@ class DirectCleanPipeline:
         return self.output_dir / f"{self.prefix}.cleaned.fastq"
 
     @property
-    def removed_fastq(self) -> Path:
-        return self.output_dir / f"{self.prefix}.removed.fastq"
+    def rescued_fastq(self) -> Path:
+        """Sub-reads rescued by homopolymer chopping (Stage 5)."""
+        return self.output_dir / f"{self.prefix}.rescued.fastq"
 
     # ---- Stage 1: Breakinator ----
 
@@ -329,20 +338,23 @@ class DirectCleanPipeline:
         )
         return bam
 
-    # ---- Stage 5: Homopolymer Filter ----
+    # ---- Stage 5: Homopolymer Rescue ----
 
     def _run_filter(self, bam: Path, fastq: Path) -> FilterReport:
-        """Stage 5: detect and remove homopolymer-mediated artifacts.
+        """Stage 5: detect and rescue homopolymer-mediated artifacts.
+
+        Artifact reads are chopped at homopolymer junctions; flanking
+        sub-reads ≥100 bp are rescued into the cleaned output.
 
         Args:
             bam:   Aligned BAM from Stage 4.
-            fastq: The FASTQ that was aligned (for splitting).
+            fastq: The FASTQ that was aligned (for chopping).
 
         Returns:
             FilterReport with statistics.
         """
         logger.info("=" * 55)
-        logger.info("Stage 5/5: Homopolymer Filter — RT artifact removal")
+        logger.info("Stage 5/5: Homopolymer Rescue — RT artifact chopping")
         logger.info("=" * 55)
 
         classifier = ArtifactClassifier(
@@ -367,7 +379,7 @@ class DirectCleanPipeline:
             2. Restrander: correct strand orientation, trim primers.
             3. Rescuer: chop reads with internal TSO/RTP adapters.
             4. Minimap2: splice-aware alignment to reference.
-            5. Homopolymer Filter: remove RT template switching artifacts.
+            5. Homopolymer Rescue: chop RT template switching artifacts.
 
         Returns:
             PipelineReport with combined statistics from all stages.
@@ -396,7 +408,7 @@ class DirectCleanPipeline:
         # Stage 4: Minimap2
         bam = self._run_alignment(stage3_fastq)
 
-        # Stage 5: Homopolymer Filter
+        # Stage 5: Homopolymer Rescue
         filter_report = self._run_filter(bam, stage3_fastq)
         pipeline_report.filter_report = filter_report
 
