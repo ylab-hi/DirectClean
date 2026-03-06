@@ -4,16 +4,6 @@ Homopolymer-mediated RT artifact detector.
 Wraps the dual-criteria scanning logic (A/T density + longest run)
 into a configurable detector class that operates on JunctionInfo and
 ChimericRead objects produced by junction_parser.
-
-Biological background
----------------------
-During reverse transcription of Direct-cDNA libraries, the RT enzyme
-can dissociate at A/T-rich (especially poly-A tail) regions and
-re-prime on a different mRNA molecule.  This "template switching"
-produces chimeric reads that look like gene fusions but are artifacts.
-
-The detector flags junctions whose flanking sequences are dominated
-by A/T homopolymers — the hallmark of this mechanism.
 """
 
 from __future__ import annotations
@@ -23,7 +13,7 @@ from dataclasses import dataclass
 from typing import List
 
 from directclean.filter.junction_parser import ChimericRead, JunctionInfo
-from directclean.utils.sequence_operator import scan_homopolymer, HomopolymerHit
+from directclean.utils.sequence_operator import HomopolymerHit, scan_homopolymer
 
 logger = logging.getLogger(__name__)
 
@@ -34,22 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class HomopolymerConfig:
-    """Tuneable parameters for the homopolymer filter.
-
-    Attributes:
-        scan_window:        Sliding window size used by scan_homopolymer
-                            on each flanking sequence (default 10 bp).
-        density_threshold:  Minimum A/T fraction within a scanning window
-                            to count as a hit (default 0.8).
-        min_run:            Minimum consecutive A or T to count as a hit
-                            (default 5).
-        context_window:     Already applied in junction_parser when
-                            extracting upstream/downstream — stored here
-                            for bookkeeping (default 50 bp).
-        require_both_sides: If True, both upstream AND downstream must
-                            hit to call an artifact.  If False, either
-                            side hitting is sufficient (default False).
-    """
+    """Tuneable parameters for the homopolymer filter."""
     scan_window: int = 10
     density_threshold: float = 0.8
     min_run: int = 5
@@ -63,18 +38,12 @@ class HomopolymerConfig:
 
 @dataclass(frozen=True)
 class JunctionVerdict:
-    """Artifact verdict for a single junction.
-
-    Attributes:
-        junction:       The JunctionInfo that was evaluated.
-        is_artifact:    True if this junction is flagged as an RT artifact.
-        upstream_hit:   HomopolymerHit result for the upstream flank.
-        downstream_hit: HomopolymerHit result for the downstream flank.
-    """
+    """Artifact verdict for a single junction."""
     junction: JunctionInfo
     is_artifact: bool
     upstream_hit: HomopolymerHit
     downstream_hit: HomopolymerHit
+    hit_source: str = "none"  # upstream | downstream | combined_cross_boundary | combined_upstream | combined_downstream | none
 
 
 # ---------------------------------------------------------------------------
@@ -83,17 +52,7 @@ class JunctionVerdict:
 
 @dataclass(frozen=True)
 class ReadVerdict:
-    """Artifact verdict for an entire read.
-
-    A read is called artifact if **any** of its junctions is flagged.
-
-    Attributes:
-        read_id:            Read name.
-        is_artifact:        True → goes to removed.fastq.
-        junction_verdicts:  Per-junction details.
-        n_junctions:        Total number of inter-segment junctions.
-        n_artifact_junctions: How many were flagged.
-    """
+    """Artifact verdict for an entire read."""
     read_id: str
     is_artifact: bool
     junction_verdicts: List[JunctionVerdict]
@@ -106,42 +65,13 @@ class ReadVerdict:
 # ---------------------------------------------------------------------------
 
 class HomopolymerDetector:
-    """Configurable detector for homopolymer-mediated RT artifacts.
-
-    Usage::
-
-        cfg = HomopolymerConfig(scan_window=10, density_threshold=0.8, min_run=3)
-        detector = HomopolymerDetector(cfg)
-
-        # From a ChimericRead produced by junction_parser
-        verdict = detector.judge_read(chimeric_read)
-        if verdict.is_artifact:
-            print(f"{verdict.read_id} is an artifact")
-    """
+    """Configurable detector for homopolymer-mediated RT artifacts."""
 
     def __init__(self, config: HomopolymerConfig | None = None) -> None:
         self.config = config or HomopolymerConfig()
 
-    # ----- single junction -----
-
     def judge_junction(self, junction: JunctionInfo) -> JunctionVerdict:
-        """Evaluate one junction for homopolymer artifact signal.
-
-        Scans the upstream and downstream flanking sequences extracted
-        by junction_parser, using the dual-criteria sliding window.
-
-        If neither side individually hits, a combined scan is performed
-        on the concatenated upstream+downstream sequence.  This catches
-        cases where the homopolymer region straddles the junction
-        boundary, or where minimap2's split point is slightly offset
-        from the true homopolymer location.
-
-        Args:
-            junction: JunctionInfo with upstream_seq / downstream_seq.
-
-        Returns:
-            JunctionVerdict with detailed hit information.
-        """
+        """Evaluate one junction for homopolymer artifact signal."""
         cfg = self.config
 
         upstream_hit = scan_homopolymer(
@@ -157,16 +87,22 @@ class HomopolymerDetector:
             min_run=cfg.min_run,
         )
 
+        hit_source = "none"
+
         if cfg.require_both_sides:
             is_artifact = upstream_hit.is_hit and downstream_hit.is_hit
+            if is_artifact:
+                hit_source = "both_sides"
         else:
             is_artifact = upstream_hit.is_hit or downstream_hit.is_hit
+            if upstream_hit.is_hit and downstream_hit.is_hit:
+                hit_source = "both_sides"
+            elif upstream_hit.is_hit:
+                hit_source = "upstream"
+            elif downstream_hit.is_hit:
+                hit_source = "downstream"
 
-        # Combined scan: if neither side individually hits, scan the
-        # concatenated upstream+downstream as one sequence.  This
-        # catches homopolymer regions that straddle the junction
-        # boundary or where minimap2's split point is offset from
-        # the true artifact location.
+        # Combined scan: rescue motifs that straddle the junction boundary.
         if not is_artifact:
             combined_seq = junction.upstream_seq + junction.downstream_seq
             combined_hit = scan_homopolymer(
@@ -175,39 +111,41 @@ class HomopolymerDetector:
                 density_threshold=cfg.density_threshold,
                 min_run=cfg.min_run,
             )
+
             if combined_hit.is_hit:
                 is_artifact = True
-                # Report the combined hit on whichever side is closer
-                # to the junction boundary (middle of combined seq)
-                mid = len(junction.upstream_seq)
-                if combined_hit.window_seq:
-                    # Find where the hit window is in combined seq
-                    hit_pos = combined_seq.find(combined_hit.window_seq)
-                    if hit_pos != -1 and hit_pos < mid:
-                        upstream_hit = combined_hit
-                    else:
-                        downstream_hit = combined_hit
+                boundary = len(junction.upstream_seq)
+
+                start = combined_hit.window_start
+                end = combined_hit.window_end
+                center = (start + end) / 2.0
+
+                crosses_boundary = (
+                    (start < boundary < end)
+                    or (start == boundary)
+                    or (end == boundary)
+                )
+
+                if crosses_boundary:
+                    upstream_hit = combined_hit
+                    hit_source = "combined_cross_boundary"
+                elif center < boundary:
+                    upstream_hit = combined_hit
+                    hit_source = "combined_upstream"
+                else:
+                    downstream_hit = combined_hit
+                    hit_source = "combined_downstream"
 
         return JunctionVerdict(
             junction=junction,
             is_artifact=is_artifact,
             upstream_hit=upstream_hit,
             downstream_hit=downstream_hit,
+            hit_source=hit_source,
         )
 
-    # ----- whole read -----
-
     def judge_read(self, chimeric_read: ChimericRead) -> ReadVerdict:
-        """Evaluate all junctions of a chimeric read.
-
-        A read is flagged as artifact if **any** junction is positive.
-
-        Args:
-            chimeric_read: ChimericRead from junction_parser.
-
-        Returns:
-            ReadVerdict summarising the outcome.
-        """
+        """Evaluate all junctions of a chimeric read."""
         verdicts: List[JunctionVerdict] = []
         n_artifact = 0
 

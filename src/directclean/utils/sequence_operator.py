@@ -19,10 +19,12 @@ from dataclasses import dataclass
 class HomopolymerHit:
     """Result of a homopolymer scan on a single sequence window."""
     is_hit: bool
-    density: float          # A/T fraction in the window (0.0 - 1.0)
-    longest_run_length: int # longest consecutive A or T stretch
-    longest_run_base: str   # which base formed the longest run ('A' or 'T')
-    window_seq: str         # the actual window sequence examined
+    density: float            # A/T fraction in the selected window (0.0 - 1.0)
+    longest_run_length: int   # longest consecutive A or T stretch
+    longest_run_base: str     # which base formed the longest run ('A' or 'T')
+    window_seq: str           # the selected window sequence
+    window_start: int         # 0-based start on the scanned sequence
+    window_end: int           # 0-based exclusive end on the scanned sequence
 
 
 @dataclass(frozen=True)
@@ -70,9 +72,6 @@ def longest_consecutive_run(sequence: str, bases: str = "AT") -> Tuple[int, str]
     """
     Find the longest consecutive run of any base in *bases*.
 
-    Scans the sequence once (O(n)) and tracks the longest stretch of
-    each target base independently, then returns the overall winner.
-
     Args:
         sequence: DNA string (will be upper-cased internally).
         bases:    Characters to consider (default "AT").
@@ -111,7 +110,6 @@ def longest_consecutive_run(sequence: str, bases: str = "AT") -> Tuple[int, str]
             cur_len = 0
             cur_base = ""
 
-    # handle run that extends to the end of the string
     if cur_len > best_len:
         best_len = cur_len
         best_base = cur_base
@@ -127,12 +125,12 @@ def at_density(sequence: str) -> float:
         sequence: DNA string.
 
     Returns:
-        Float in [0.0, 1.0].  Returns 0.0 for empty strings.
+        Float in [0.0, 1.0]. Returns 0.0 for empty strings.
 
     Examples:
-        >>> at_density("AAAATAAA")   # 8 A/T out of 8
+        >>> at_density("AAAATAAA")
         1.0
-        >>> at_density("ATCGATCG")   # 4 A/T out of 8
+        >>> at_density("ATCGATCG")
         0.5
     """
     if not sequence:
@@ -150,55 +148,45 @@ def scan_homopolymer(
     """
     Sliding-window scan for A/T-rich homopolymer regions.
 
-    Uses **dual criteria** so that imperfect homopolymers with
-    1-2 Nanopore sequencing errors (e.g. AAAATAAA, TTTTCTTTTA)
-    are still caught, while true dinucleotide repeats like
-    ATATATATAT are correctly rejected.
+    Uses dual criteria so that imperfect homopolymers with
+    1-2 Nanopore sequencing errors are still caught, while
+    true dinucleotide repeats like ATATATATAT are rejected.
 
-    Algorithm
-    ---------
-    A sliding window of *window_size* bp moves across *sequence*.
-    A window is a "hit" when **both** conditions are met:
-
-    1. A/T density  ≥  *density_threshold*
-    2. Longest consecutive A or T run  ≥  *min_run*
-
-    The function returns the **worst** (most homopolymer-like) window
-    found, i.e. the one with the highest density among all windows
-    that satisfy both criteria.
+    Among all passing windows, returns the most relevant one:
+    - highest density first
+    - then longer consecutive run
+    - then earlier window position
 
     Args:
         sequence:           DNA string to scan.
-        window_size:        Sliding window width in bp (default 10).
-        density_threshold:  Minimum A/T fraction to call a hit (default 0.8).
-        min_run:            Minimum consecutive A or T run (default 3).
+        window_size:        Sliding window width in bp.
+        density_threshold:  Minimum A/T fraction to call a hit.
+        min_run:            Minimum consecutive A or T run.
 
     Returns:
-        HomopolymerHit with is_hit=True if any window passes both criteria.
-
-    Examples:
-        >>> scan_homopolymer("AAAATAAA").is_hit          # imperfect poly-A
-        True
-        >>> scan_homopolymer("TTTTCTTTTA").is_hit         # imperfect poly-T
-        True
-        >>> scan_homopolymer("ATATATATAT").is_hit         # dinuc repeat
-        False
-        >>> scan_homopolymer("AGTCAGTCAG").is_hit         # normal seq
-        False
+        HomopolymerHit with exact window coordinates.
     """
     seq = sequence.upper()
     n = len(seq)
 
-    # If sequence is shorter than window, treat the whole thing as one window
     effective_window = min(window_size, n)
     if effective_window == 0:
-        return HomopolymerHit(False, 0.0, 0, "", "")
+        return HomopolymerHit(
+            is_hit=False,
+            density=0.0,
+            longest_run_length=0,
+            longest_run_base="",
+            window_seq="",
+            window_start=0,
+            window_end=0,
+        )
 
     best_hit: Optional[HomopolymerHit] = None
-    best_density = -1.0
+    best_key = None  # (density, run_len, -start)
 
     for start in range(n - effective_window + 1):
-        win = seq[start : start + effective_window]
+        end = start + effective_window
+        win = seq[start:end]
 
         d = at_density(win)
         if d < density_threshold:
@@ -208,22 +196,22 @@ def scan_homopolymer(
         if run_len < min_run:
             continue
 
-        # Both criteria met — track the most extreme window
-        if d > best_density:
-            best_density = d
+        key = (d, run_len, -start)
+        if best_key is None or key > best_key:
+            best_key = key
             best_hit = HomopolymerHit(
                 is_hit=True,
                 density=d,
                 longest_run_length=run_len,
                 longest_run_base=run_base,
                 window_seq=win,
+                window_start=start,
+                window_end=end,
             )
 
     if best_hit is not None:
         return best_hit
 
-    # No window passed both criteria — return the worst-case stats
-    # across the whole sequence so callers can still inspect values.
     overall_run, overall_base = longest_consecutive_run(seq)
     return HomopolymerHit(
         is_hit=False,
@@ -231,6 +219,8 @@ def scan_homopolymer(
         longest_run_length=overall_run,
         longest_run_base=overall_base,
         window_seq=seq[:effective_window],
+        window_start=0,
+        window_end=effective_window,
     )
 
 
@@ -249,11 +239,10 @@ def extract_junction_context(
     Args:
         sequence:    Full read sequence.
         position:    Junction position (0-indexed, between two bases).
-        window_size: Bases to extract on each side (default 30).
+        window_size: Bases to extract on each side.
 
     Returns:
-        (upstream_seq, downstream_seq).  May be shorter than *window_size*
-        at sequence boundaries.
+        (upstream_seq, downstream_seq). May be shorter at boundaries.
 
     Examples:
         >>> extract_junction_context("ATCGATCGATCGATCG", 8, window_size=4)
@@ -280,8 +269,8 @@ def find_all_homopolymers(
 
     Args:
         sequence:   DNA string.
-        min_length: Minimum run length to report (default 5).
-        bases:      Which bases to scan (default "AT").
+        min_length: Minimum run length to report.
+        bases:      Which bases to scan.
 
     Returns:
         Sorted list of HomopolymerRun objects.
@@ -289,7 +278,7 @@ def find_all_homopolymers(
     Examples:
         >>> find_all_homopolymers("ATCGAAAAACCTTTTT")
         [HomopolymerRun(base='A', start=4, end=9, length=5),
-        HomopolymerRun(base='T', start=11, end=16, length=5)]
+         HomopolymerRun(base='T', start=11, end=16, length=5)]
     """
     seq = sequence.upper()
     target = set(bases.upper())

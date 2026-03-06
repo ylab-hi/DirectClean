@@ -266,11 +266,6 @@ def parse_chimeric_read(
     if sequence is None:
         return None
 
-    print(f"[DEBUG] read_id={read_id}")
-    print(f"[DEBUG] is_reverse={alignment.is_reverse}")
-    print(f"[DEBUG] seq_head={sequence[:80]}")
-    print(f"[DEBUG] seq_tail={sequence[-80:]}")
-
     # ---- 1. Build segment list ----
     segments: List[SegmentInfo] = []
 
