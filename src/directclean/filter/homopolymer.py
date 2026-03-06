@@ -45,16 +45,16 @@ class HomopolymerConfig:
                             (default 5).
         context_window:     Already applied in junction_parser when
                             extracting upstream/downstream — stored here
-                            for bookkeeping (default 30 bp).
+                            for bookkeeping (default 50 bp).
         require_both_sides: If True, both upstream AND downstream must
                             hit to call an artifact.  If False, either
-                            side hitting is sufficient (default True).
+                            side hitting is sufficient (default False).
     """
     scan_window: int = 10
     density_threshold: float = 0.8
     min_run: int = 5
-    context_window: int = 30
-    require_both_sides: bool = True
+    context_window: int = 50
+    require_both_sides: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,12 @@ class HomopolymerDetector:
         Scans the upstream and downstream flanking sequences extracted
         by junction_parser, using the dual-criteria sliding window.
 
+        If neither side individually hits, a combined scan is performed
+        on the concatenated upstream+downstream sequence.  This catches
+        cases where the homopolymer region straddles the junction
+        boundary, or where minimap2's split point is slightly offset
+        from the true homopolymer location.
+
         Args:
             junction: JunctionInfo with upstream_seq / downstream_seq.
 
@@ -155,6 +161,32 @@ class HomopolymerDetector:
             is_artifact = upstream_hit.is_hit and downstream_hit.is_hit
         else:
             is_artifact = upstream_hit.is_hit or downstream_hit.is_hit
+
+        # Combined scan: if neither side individually hits, scan the
+        # concatenated upstream+downstream as one sequence.  This
+        # catches homopolymer regions that straddle the junction
+        # boundary or where minimap2's split point is offset from
+        # the true artifact location.
+        if not is_artifact:
+            combined_seq = junction.upstream_seq + junction.downstream_seq
+            combined_hit = scan_homopolymer(
+                combined_seq,
+                window_size=cfg.scan_window,
+                density_threshold=cfg.density_threshold,
+                min_run=cfg.min_run,
+            )
+            if combined_hit.is_hit:
+                is_artifact = True
+                # Report the combined hit on whichever side is closer
+                # to the junction boundary (middle of combined seq)
+                mid = len(junction.upstream_seq)
+                if combined_hit.window_seq:
+                    # Find where the hit window is in combined seq
+                    hit_pos = combined_seq.find(combined_hit.window_seq)
+                    if hit_pos != -1 and hit_pos < mid:
+                        upstream_hit = combined_hit
+                    else:
+                        downstream_hit = combined_hit
 
         return JunctionVerdict(
             junction=junction,

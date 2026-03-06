@@ -12,6 +12,17 @@ Changed in v2.0:
     internal-adapter rescue — so that valid gene segments on either
     side of a homopolymer junction are preserved as independent reads.
 
+Changed in v3.0:
+    Added a post-detection filter to eliminate false positives caused
+    by unreliable alignments on non-standard contigs:
+
+    **Standard-chromosome whitelist**: only junctions where BOTH
+    segments map to standard chromosomes (chr1-22, chrX, chrY, chrM)
+    are considered.  Alt loci, unplaced scaffolds (GL, KI, KZ, ML
+    prefixes), and other non-standard contigs produce abundant false
+    chimeric alignments due to sequence similarity with standard
+    chromosomes and are excluded.
+
 Typical usage::
 
     classifier = ArtifactClassifier(
@@ -46,6 +57,12 @@ logger = logging.getLogger(__name__)
 # Minimum sub-read length to keep after chopping (bp)
 _MIN_SEGMENT_LENGTH = 100
 
+# Standard chromosomes — only junctions where BOTH segments map to one
+# of these are eligible for artifact calling.  Alt loci, unplaced
+# scaffolds (GL000xxx, KI270xxx, KZ208xxx, ML143xxx, etc.) produce
+# abundant false chimeric alignments and must be excluded.
+_STANDARD_CHROMS = {f"chr{i}" for i in range(1, 23)} | {"chrX", "chrY", "chrM"}
+
 
 # ---------------------------------------------------------------------------
 # Report data class
@@ -57,10 +74,12 @@ class FilterReport:
 
     Attributes:
         total_chimeric_reads:   Reads with SA tag (candidates examined).
-        artifact_reads:         Reads with ≥1 homopolymer artifact junction.
+        artifact_reads:         Reads with ≥1 artifact junction AFTER filtering.
         clean_chimeric_reads:   Chimeric reads that passed the filter.
         total_junctions:        Total inter-segment junctions examined.
-        artifact_junctions:     Junctions that triggered the filter.
+        artifact_junctions:     Junctions that triggered the filter AFTER filtering.
+        skipped_junctions:      Junctions that had homopolymer signal but were
+                                skipped by the genomic-coordinate filters.
         total_reads_in_fastq:   Reads in the input FASTQ (chimeric + non-chimeric).
         output_reads:           Total reads written to cleaned output
                                 (passthrough + rescued sub-reads).
@@ -72,11 +91,15 @@ class FilterReport:
     clean_chimeric_reads: int = 0
     total_junctions: int = 0
     artifact_junctions: int = 0
+    skipped_junctions: int = 0
     total_reads_in_fastq: int = 0
     output_reads: int = 0
     segments_rescued: int = 0
     segments_discarded: int = 0
     verdicts: List[ReadVerdict] = field(default_factory=list, repr=False)
+
+    # Track which reads actually get chopped (for TSV report)
+    _chopped_read_ids: Set[str] = field(default_factory=set, repr=False)
 
     # Keep old attribute names accessible for backward compatibility
     @property
@@ -99,6 +122,7 @@ class FilterReport:
             f"  Clean chimeric reads    : {self.clean_chimeric_reads:,}\n"
             f"  Total junctions         : {self.total_junctions:,}\n"
             f"  Artifact junctions      : {self.artifact_junctions:,}\n"
+            f"  Skipped junctions (filtered): {self.skipped_junctions:,}\n"
             f"  ---\n"
             f"  Input FASTQ reads       : {self.total_reads_in_fastq:,}\n"
             f"  Segments rescued        : {self.segments_rescued:,}\n"
@@ -106,6 +130,32 @@ class FilterReport:
             f"  Output reads            : {self.output_reads:,}\n"
             "=============================================="
         )
+
+
+# ---------------------------------------------------------------------------
+# Junction filter helper
+# ---------------------------------------------------------------------------
+
+def _is_valid_artifact_junction(left_chrom: str, left_pos: int,
+                                right_chrom: str, right_pos: int) -> bool:
+    """Check whether an artifact junction passes genomic-coordinate filters.
+
+    A junction is valid (i.e. eligible for chopping) only if both
+    segments map to standard chromosomes (chr1-22, chrX, chrY, chrM).
+
+    Junctions involving alt loci, unplaced scaffolds (GL000xxx,
+    KI270xxx, KZ208xxx, ML143xxx, etc.), or other non-standard contigs
+    are skipped because alignment quality on these contigs is unreliable
+    and produces abundant false chimeric alignments due to sequence
+    similarity with standard chromosomes.
+
+    Returns:
+        True if the junction should be kept for chopping.
+    """
+    if left_chrom not in _STANDARD_CHROMS or right_chrom not in _STANDARD_CHROMS:
+        return False
+
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +169,11 @@ class ArtifactClassifier:
         1. Iterate over chimeric reads in the BAM.
         2. For each read, extract junctions and run the homopolymer
            detector on the flanking sequences.
-        3. Collect artifact read IDs and their chop positions
-           (read-coordinate positions of artifact junctions).
-        4. Stream through the original FASTQ: pass clean reads through
+        3. Apply genomic-coordinate filters to remove false positives
+           caused by alt scaffolds, pseudogenes, and mapper false-splits.
+        4. Collect artifact read IDs and their chop positions
+           (read-coordinate positions of validated artifact junctions).
+        5. Stream through the original FASTQ: pass clean reads through
            unchanged, chop artifact reads at junction positions and
            write rescued sub-reads (≥100 bp) to output.
 
@@ -145,7 +197,7 @@ class ArtifactClassifier:
         input_fastq: str | Path,
         output_dir: str | Path,
         config: HomopolymerConfig | None = None,
-        context_window: int = 30,
+        context_window: int = 50,
         min_mapq: int = 0,
         prefix: str = "directclean",
         min_segment_length: int = _MIN_SEGMENT_LENGTH,
@@ -184,6 +236,12 @@ class ArtifactClassifier:
     def scan_bam(self) -> Tuple[Dict[str, List[int]], FilterReport]:
         """Scan BAM for chimeric reads and classify junctions.
 
+        After homopolymer detection, each artifact junction is checked
+        against a standard-chromosome whitelist filter: both segments
+        must map to chr1-22, chrX, chrY, or chrM.  Junctions involving
+        alt loci or unplaced scaffolds are skipped to avoid false
+        positives from unreliable alignments on these contigs.
+
         Returns:
             (chop_map, report) — dict mapping artifact read IDs to
             sorted list of chop positions (read coordinates), and
@@ -204,18 +262,35 @@ class ArtifactClassifier:
             verdict = self.detector.judge_read(chimeric)
             report.verdicts.append(verdict)
             report.total_junctions += verdict.n_junctions
-            report.artifact_junctions += verdict.n_artifact_junctions
 
             if verdict.is_artifact:
-                report.artifact_reads += 1
-                # Collect read-coordinate positions of artifact junctions
-                artifact_positions = [
-                    jv.junction.read_position
-                    for jv in verdict.junction_verdicts
-                    if jv.is_artifact
-                ]
-                artifact_positions.sort()
-                chop_map[verdict.read_id] = artifact_positions
+                # Apply genomic-coordinate filters to each artifact junction
+                artifact_positions = []
+                skipped = 0
+
+                for jv in verdict.junction_verdicts:
+                    if not jv.is_artifact:
+                        continue
+
+                    left = jv.junction.left_segment
+                    right = jv.junction.right_segment
+
+                    if _is_valid_artifact_junction(
+                        left.chrom, left.ref_start,
+                        right.chrom, right.ref_start,
+                    ):
+                        artifact_positions.append(jv.junction.read_position)
+                    else:
+                        skipped += 1
+
+                report.skipped_junctions += skipped
+                report.artifact_junctions += len(artifact_positions)
+
+                if artifact_positions:
+                    report.artifact_reads += 1
+                    artifact_positions.sort()
+                    chop_map[verdict.read_id] = artifact_positions
+                    report._chopped_read_ids.add(verdict.read_id)
 
         report.clean_chimeric_reads = (
             report.total_chimeric_reads - report.artifact_reads
@@ -223,7 +298,8 @@ class ArtifactClassifier:
 
         logger.info(
             f"BAM scan complete: {report.total_chimeric_reads:,} chimeric reads, "
-            f"{report.artifact_reads:,} artifacts to rescue"
+            f"{report.artifact_reads:,} artifacts to rescue "
+            f"({report.skipped_junctions:,} junctions skipped by filters)"
         )
         return chop_map, report
 
@@ -376,8 +452,17 @@ class ArtifactClassifier:
         Columns: read_id, verdict, n_junctions, n_artifact_junctions,
                  junction_details (semicolon-separated).
 
-        The verdict column now uses RESCUED instead of ARTIFACT for
-        reads that were chopped rather than removed.
+        The verdict column reflects the FINAL status after genomic-
+        coordinate filtering:
+            - RESCUED: read was actually chopped (artifact junctions
+              passed all filters).
+            - FILTERED: homopolymer signal detected but all artifact
+              junctions were skipped by genomic-coordinate filters
+              (non-standard contig or same-chrom <100kb).
+            - CLEAN: no homopolymer artifact signal detected.
+
+        Each junction's detail string includes a 'filter' field showing
+        whether that specific junction passed or was skipped.
         """
         logger.info(f"Writing report to {self.report_path}")
 
@@ -390,9 +475,24 @@ class ArtifactClassifier:
 
             for rv in report.verdicts:
                 details_parts = []
+                n_passed = 0
+
                 for jv in rv.junction_verdicts:
                     left = jv.junction.left_segment
                     right = jv.junction.right_segment
+
+                    # Determine filter status for this junction
+                    if jv.is_artifact:
+                        passed = _is_valid_artifact_junction(
+                            left.chrom, left.ref_start,
+                            right.chrom, right.ref_start,
+                        )
+                        if passed:
+                            n_passed += 1
+                        filter_status = "PASS" if passed else "SKIPPED"
+                    else:
+                        filter_status = "NA"
+
                     detail = (
                         f"{left.chrom}:{left.ref_start}({left.strand})->"
                         f"{right.chrom}:{right.ref_start}({right.strand})"
@@ -404,14 +504,24 @@ class ArtifactClassifier:
                         f"(d={jv.downstream_hit.density:.2f},"
                         f"run={jv.downstream_hit.longest_run_length})"
                         f"|artifact={jv.is_artifact}"
+                        f"|filter={filter_status}"
                     )
                     details_parts.append(detail)
 
+                # Determine final verdict
+                if rv.read_id in report._chopped_read_ids:
+                    verdict_str = "RESCUED"
+                elif rv.is_artifact:
+                    # Had homopolymer signal but all junctions were filtered
+                    verdict_str = "FILTERED"
+                else:
+                    verdict_str = "CLEAN"
+
                 line = (
                     f"{rv.read_id}\t"
-                    f"{'RESCUED' if rv.is_artifact else 'CLEAN'}\t"
+                    f"{verdict_str}\t"
                     f"{rv.n_junctions}\t"
-                    f"{rv.n_artifact_junctions}\t"
+                    f"{n_passed}\t"
                     f"{';'.join(details_parts)}\n"
                 )
                 fh.write(line)

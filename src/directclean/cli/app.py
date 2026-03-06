@@ -159,7 +159,7 @@ def main(
         min=2,
     ),
     context_window: int = typer.Option(
-        30,
+        50,
         "--context-window",
         help="Bases to extract on each side of a junction.",
         min=10,
