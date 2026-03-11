@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class HomopolymerConfig:
     """Tuneable parameters for the homopolymer filter."""
     scan_window: int = 10
-    density_threshold: float = 0.8
+    density_threshold: float = 0.85
     min_run: int = 5
     context_window: int = 50
     require_both_sides: bool = False
