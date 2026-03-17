@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/DirectClean_Logo.png" width="300" alt="DirectClean Logo">
+</p>
+
 # DirectClean
 
 A comprehensive preprocessing pipeline for **Oxford Nanopore (ONT) direct-cDNA sequencing data**. DirectClean integrates strand orientation, artifact removal, and chimeric read rescue to produce clean, properly oriented FASTQ files optimized for downstream transcript quantification and gene fusion analysis.
