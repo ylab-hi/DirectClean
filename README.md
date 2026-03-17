@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/DirectClean_Logo.png" width="300" alt="DirectClean Logo">
+  <img src="assets/DirectClean_Logo.png" width="250" alt="DirectClean Logo">
 </p>
 
 # DirectClean
