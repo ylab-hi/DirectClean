@@ -12,7 +12,7 @@ A comprehensive preprocessing pipeline for **Oxford Nanopore (ONT) direct-cDNA s
 
 ## Motivation
 
-While Pychopper is the standard tool for orienting and rescuing full-length ONT cDNA reads, direct-cDNA library preparation inherently introduces artifacts that Pychopper does not address:
+While [Pychopper](https://github.com/epi2me-labs/pychopper) is the standard tool for orienting and rescuing full-length ONT cDNA reads, direct-cDNA library preparation inherently introduces artifacts that Pychopper does not address:
 
 * **Foldback inversions**: The sequenced strand folds back on itself during reverse transcription, producing a self-inverted chimeric read.
 * **Homopolymer-mediated RT template switching**: The reverse transcriptase detaches at A/T-rich regions and re-primes on unrelated transcripts. These artifacts mimic genuine gene fusions and inflate false-positive rates in downstream analyses.
