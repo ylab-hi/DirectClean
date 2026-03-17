@@ -1,17 +1,17 @@
 # DirectClean
 
-A comprehensive preprocessing pipeline for Oxford Nanopore (ONT) direct-cDNA sequencing data. DirectClean integrates strand orientation, artifact removal, and chimeric read rescue to produce clean, properly oriented FASTQ files optimized for downstream transcript quantification and gene fusion analysis.
+A comprehensive preprocessing pipeline for **Oxford Nanopore (ONT) direct-cDNA sequencing data**. DirectClean integrates strand orientation, artifact removal, and chimeric read rescue to produce clean, properly oriented FASTQ files optimized for downstream transcript quantification and gene fusion analysis.
 
 **At a glance:**
-* What it removes: foldback inversion reads (self-inverted artifacts) and reads that cannot be strand-oriented (missing primer signals).
-* What it rescues (chopped at the artifact junction, flanking sub-reads kept): reads containing internal TSO/RTP adapter junctions (concatemers from ligation) and reads containing homopolymer-mediated RT template switching junctions.
+* **What it removes**: foldback inversion reads (self-inverted artifacts) and reads that cannot be strand-oriented (missing primer signals).
+* **What it rescues** (chopped at the artifact junction, flanking sub-reads kept): reads containing internal TSO/RTP adapter junctions (concatemers from ligation) and reads containing homopolymer-mediated RT template switching junctions.
 
 ## Motivation
 
 While Pychopper is the standard tool for orienting and rescuing full-length ONT cDNA reads, direct-cDNA library preparation inherently introduces artifacts that Pychopper does not address:
 
-* Foldback inversions: The sequenced strand folds back on itself during reverse transcription, producing a self-inverted chimeric read.
-* Homopolymer-mediated RT template switching: The reverse transcriptase detaches at A/T-rich regions and re-primes on unrelated transcripts. These artifacts mimic genuine gene fusions and inflate false-positive rates in downstream analyses.
+* **Foldback inversions**: The sequenced strand folds back on itself during reverse transcription, producing a self-inverted chimeric read.
+* **Homopolymer-mediated RT template switching**: The reverse transcriptase detaches at A/T-rich regions and re-primes on unrelated transcripts. These artifacts mimic genuine gene fusions and inflate false-positive rates in downstream analyses.
 
 DirectClean solves this by combining established tools (Breakinator, Restrander) with novel adapter and homopolymer rescue algorithms into a single, end-to-end pipeline. 
 
