@@ -4,7 +4,7 @@
 
 # DirectClean
 
-A comprehensive preprocessing pipeline for **Oxford Nanopore (ONT) direct-cDNA sequencing data**. DirectClean integrates strand orientation, artifact removal, and chimeric read rescue to produce clean, properly oriented FASTQ files optimized for downstream transcript quantification and gene fusion analysis.
+A comprehensive preprocessing pipeline for **Oxford Nanopore (ONT) direct-cDNA sequencing data**. DirectClean integrates strand orientation, artifact removal, and chimeric read rescue to produce clean, properly oriented FASTQ files optimized for downstream transcript quantification, isoform, and gene fusion analysis.
 
 **At a glance:**
 * **What it removes**: foldback inversion reads (self-inverted artifacts) and reads that cannot be strand-oriented (missing primer signals).
@@ -17,8 +17,7 @@ While Pychopper is the standard tool for orienting and rescuing full-length ONT 
 * **Foldback inversions**: The sequenced strand folds back on itself during reverse transcription, producing a self-inverted chimeric read.
 * **Homopolymer-mediated RT template switching**: The reverse transcriptase detaches at A/T-rich regions and re-primes on unrelated transcripts. These artifacts mimic genuine gene fusions and inflate false-positive rates in downstream analyses.
 
-DirectClean solves this by combining established tools (Breakinator, Restrander) with novel adapter and homopolymer rescue algorithms into a single, end-to-end pipeline. 
-
+DirectClean solves this by combining established tools ([Breakinator](https://github.com/jheinz27/breakinator), [Restrander](https://github.com/mritchielab/restrander)) with novel adapter and homopolymer rescue algorithms into a single, end-to-end pipeline.
 ## Pipeline Architecture & Algorithm
 
 Stages 1 and 2 discard definitively artifactual or unorientable reads. Stages 3, 4, and 5 function as rescue modules; they identify internal artifact junctions, chop the chimeric sequences, and rescue the valid flanking sub-reads.
@@ -102,7 +101,12 @@ Benchmarked on 5.35M direct-cDNA reads from the VCaP prostate cancer cell line:
 | Residual homopolymer artifacts | 70,140 | 0 |
 
 ## Citation
-Manuscript in preparation.
+
+If you use DirectClean in your research, please cite our manuscript along with the foundational tools integrated into this pipeline:
+
+* **Breakinator:** Heinz, J. M., Meyerson, M., & Li, H. (2026). Detecting foldback artifacts in long-reads. *BMC Genomics*.
+* **Restrander:** Schuster, J., Ritchie, M. E., & Gouil, Q. (2023). Restrander: rapid orientation and artefact removal for long-read cDNA data. *NAR Genomics and Bioinformatics*, 5(4), lqad108.
+* **DirectClean:** Guo, Q., & Yang, R. (2026). DirectClean: strand orientation, artifact removal, and chimeric read rescue for Oxford Nanopore direct-cDNA sequencing. *Manuscript in preparation*.
 
 ## License
 MIT
