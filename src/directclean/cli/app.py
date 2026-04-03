@@ -37,6 +37,7 @@ app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 
+
 def _setup_logging(verbose: bool) -> None:
     """Configure logging with Rich handler."""
     level = logging.DEBUG if verbose else logging.INFO
@@ -44,11 +45,13 @@ def _setup_logging(verbose: bool) -> None:
         level=level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(
-            console=console,
-            show_path=False,
-            rich_tracebacks=True,
-        )],
+        handlers=[
+            RichHandler(
+                console=console,
+                show_path=False,
+                rich_tracebacks=True,
+            )
+        ],
     )
 
 
@@ -62,12 +65,14 @@ def _version_callback(value: bool) -> None:
 # Main command
 # ---------------------------------------------------------------------------
 
+
 @app.callback(invoke_without_command=True)
 def main(
     # ---- Required ----
     input_fastq: Path = typer.Option(
         ...,
-        "--input", "-i",
+        "--input",
+        "-i",
         help="Raw input FASTQ file from Oxford Nanopore Direct-cDNA sequencing.",
         exists=True,
         dir_okay=False,
@@ -75,7 +80,8 @@ def main(
     ),
     reference: Path = typer.Option(
         ...,
-        "--reference", "-r",
+        "--reference",
+        "-r",
         help="Reference genome FASTA file.",
         exists=True,
         dir_okay=False,
@@ -83,27 +89,29 @@ def main(
     ),
     output_dir: Path = typer.Option(
         ...,
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Output directory for results.",
     ),
-
     # ---- General ----
     threads: int = typer.Option(
         4,
-        "--threads", "-t",
+        "--threads",
+        "-t",
         help="Number of threads for minimap2, samtools, and breakinator.",
         min=1,
     ),
     prefix: str = typer.Option(
         "directclean",
-        "--prefix", "-p",
+        "--prefix",
+        "-p",
         help="Filename prefix for output files.",
     ),
-
     # ---- Breakinator parameters ----
     junc_bed: Optional[Path] = typer.Option(
         None,
-        "--junc-bed", "-j",
+        "--junc-bed",
+        "-j",
         help=(
             "Junction BED12 file for guided minimap2 alignment "
             "(used by Breakinator stage). Recommended: GENCODE annotation."
@@ -112,7 +120,6 @@ def main(
         dir_okay=False,
         readable=True,
     ),
-
     # ---- Rescuer parameters ----
     max_edit_distance: int = typer.Option(
         3,
@@ -137,7 +144,6 @@ def main(
         help="Minimum sub-read length to keep after chopping (bp).",
         min=10,
     ),
-
     # ---- Homopolymer filter parameters ----
     scan_window: int = typer.Option(
         10,
@@ -164,16 +170,22 @@ def main(
         help="Bases to extract on each side of a junction.",
         min=10,
     ),
-
     # ---- Flags ----
     verbose: bool = typer.Option(
         False,
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         help="Enable debug logging.",
+    ),
+    html_report: bool = typer.Option(
+        False,
+        "--html-report",
+        help="Generate an interactive HTML summary report with charts.",
     ),
     version: Optional[bool] = typer.Option(
         None,
-        "--version", "-V",
+        "--version",
+        "-V",
         help="Show version and exit.",
         callback=_version_callback,
         is_eager=True,
@@ -229,6 +241,20 @@ def main(
         console.print("[bold green]✓ DirectClean completed successfully.[/]")
         console.print(f"  Cleaned reads: [cyan]{pipeline.cleaned_fastq}[/]")
         console.print(f"  Rescued reads: [cyan]{pipeline.rescued_fastq}[/]")
+
+        if html_report:
+            from directclean.report import HtmlReportGenerator
+
+            report_path = output_dir / f"{prefix}.report.html"
+            generator = HtmlReportGenerator(
+                report=report,
+                config=pipeline_cfg,
+                input_fastq=input_fastq,
+                output_dir=output_dir,
+                prefix=prefix,
+            )
+            generator.write(report_path)
+            console.print(f"  HTML report: [cyan]{report_path}[/]")
 
     except FileNotFoundError as e:
         console.print(f"[bold red]Error:[/] {e}")
