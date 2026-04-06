@@ -26,7 +26,6 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +33,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _check_binary(name: str) -> str:
     """Verify that an external binary is on PATH.
@@ -92,6 +92,7 @@ def _run(cmd: list[str], description: str, **kwargs) -> subprocess.CompletedProc
 # Aligner class
 # ---------------------------------------------------------------------------
 
+
 class Minimap2Aligner:
     """Minimap2 wrapper with Direct-cDNA defaults.
 
@@ -107,19 +108,20 @@ class Minimap2Aligner:
 
     # Default minimap2 flags for Direct-cDNA
     _DEFAULTS = [
-        "-Y",              # soft-clip with original seq (critical for CIGAR parsing)
-        "-ax", "splice",   # spliced alignment for cDNA
-        "-uf",             # transcript on forward strand (Direct-cDNA protocol)
-        "-k14",            # shorter kmer, better sensitivity for Nanopore error profile
+        "-Y",  # soft-clip with original seq (critical for CIGAR parsing)
+        "-ax",
+        "splice",  # spliced alignment for cDNA
+        "-uf",  # transcript on forward strand (Direct-cDNA protocol)
+        "-k14",  # shorter kmer, better sensitivity for Nanopore error profile
         "--secondary=no",  # drop secondary alignments (we only need primary + suppl)
-        "--cs",            # cs tag for debugging / variant calling
+        "--cs",  # cs tag for debugging / variant calling
     ]
 
     def __init__(
         self,
         reference: str | Path,
         threads: int = 4,
-        extra_args: Optional[list[str]] = None,
+        extra_args: list[str] | None = None,
         sample_id: str = "directclean",
     ) -> None:
         self.reference = Path(reference)
@@ -188,8 +190,10 @@ class Minimap2Aligner:
         cmd = [
             "minimap2",
             *self._DEFAULTS,
-            "-t", str(self.threads),
-            "-R", rg_string,
+            "-t",
+            str(self.threads),
+            "-R",
+            rg_string,
             *self.extra_args,
             str(self.reference),
             str(fastq),
@@ -199,10 +203,14 @@ class Minimap2Aligner:
     def _build_samtools_sort_cmd(self, output_bam: Path) -> list[str]:
         """Construct the samtools sort command."""
         return [
-            "samtools", "sort",
-            "-@", str(self.threads),
-            "-O", "BAM",
-            "-o", str(output_bam),
+            "samtools",
+            "sort",
+            "-@",
+            str(self.threads),
+            "-O",
+            "BAM",
+            "-o",
+            str(output_bam),
             "-",  # read from stdin
         ]
 

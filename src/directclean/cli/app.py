@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -108,7 +107,7 @@ def main(
         help="Filename prefix for output files.",
     ),
     # ---- Breakinator parameters ----
-    junc_bed: Optional[Path] = typer.Option(
+    junc_bed: Path | None = typer.Option(
         None,
         "--junc-bed",
         "-j",
@@ -182,7 +181,7 @@ def main(
         "--html-report",
         help="Generate an interactive HTML summary report with charts.",
     ),
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None,
         "--version",
         "-V",

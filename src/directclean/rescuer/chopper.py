@@ -22,7 +22,6 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -45,6 +44,7 @@ _DEFAULT_CHUNK_SIZE = 5000
 # Report
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RescueReport:
     """Summary statistics for the rescue operation.
@@ -59,18 +59,20 @@ class RescueReport:
         segments_discarded: Sub-reads too short and discarded.
         details:            Per-read FinderResult for reporting.
     """
+
     total_reads: int = 0
     reads_with_internal: int = 0
     reads_without: int = 0
     total_segments: int = 0
     segments_rescued: int = 0
     segments_discarded: int = 0
-    details: List[FinderResult] = field(default_factory=list, repr=False)
+    details: list[FinderResult] = field(default_factory=list, repr=False)
 
     def __str__(self) -> str:
         pct = (
             f"{self.reads_with_internal / self.total_reads * 100:.1f}%"
-            if self.total_reads > 0 else "N/A"
+            if self.total_reads > 0
+            else "N/A"
         )
         return (
             "=== DirectClean Rescue Report ===\n"
@@ -99,11 +101,12 @@ class RescueReport:
 # Core chopping logic (pure functions, safe for multiprocessing)
 # ---------------------------------------------------------------------------
 
+
 def _chop_record(
     record: SeqRecord,
-    junctions: List[InternalJunction],
+    junctions: list[InternalJunction],
     min_segment_length: int,
-) -> Tuple[List[SeqRecord], int]:
+) -> tuple[list[SeqRecord], int]:
     """Split a SeqRecord at the given chop positions.
 
     Each resulting segment inherits the original read's quality scores
@@ -127,7 +130,7 @@ def _chop_record(
         boundaries.append(junc.chop_position)
     boundaries.append(len(seq))
 
-    segments: List[SeqRecord] = []
+    segments: list[SeqRecord] = []
     discarded = 0
 
     for i in range(len(boundaries) - 1):
@@ -159,10 +162,10 @@ def _chop_record(
 
 
 def _process_chunk(
-    chunk_data: List[Tuple[str, str, List[int]]],
+    chunk_data: list[tuple[str, str, list[int]]],
     config_dict: dict,
     min_confidence: int,
-) -> Tuple[List[Tuple[str, str, str, List[int]]], RescueReport, List[FinderResult]]:
+) -> tuple[list[tuple[str, str, str, list[int]]], RescueReport, list[FinderResult]]:
     """Process a chunk of reads in a worker process.
 
     We pass raw data (not SeqRecord) across process boundaries to
@@ -192,8 +195,7 @@ def _process_chunk(
 
         # Filter junctions by confidence
         qualified = [
-            j for j in finder_result.junctions
-            if j.confidence >= min_confidence
+            j for j in finder_result.junctions if j.confidence >= min_confidence
         ]
 
         if not qualified:
@@ -237,6 +239,7 @@ def _process_chunk(
 # Chopper class
 # ---------------------------------------------------------------------------
 
+
 class ReadChopper:
     """Chop reads at internal adapter junctions and write rescued FASTQ.
 
@@ -269,7 +272,7 @@ class ReadChopper:
         output_fastq: str | Path,
         config: AdapterConfig | None = None,
         min_confidence: int = 2,
-        report_path: Optional[str | Path] = None,
+        report_path: str | Path | None = None,
         threads: int = 1,
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
     ) -> None:
@@ -284,7 +287,7 @@ class ReadChopper:
         # Ensure output directory exists
         self.output_fastq.parent.mkdir(parents=True, exist_ok=True)
 
-    def _load_chunks(self) -> List[List[Tuple[str, str, List[int]]]]:
+    def _load_chunks(self) -> list[list[tuple[str, str, list[int]]]]:
         """Load FASTQ into chunks of serialisable tuples.
 
         Returns list of chunks, where each chunk is a list of
@@ -311,7 +314,7 @@ class ReadChopper:
     def _run_single_thread(self) -> RescueReport:
         """Original single-threaded processing (for threads=1)."""
         report = RescueReport()
-        all_output_records: List[SeqRecord] = []
+        all_output_records: list[SeqRecord] = []
 
         finder = AdapterFinder(self.config)
 
@@ -327,7 +330,8 @@ class ReadChopper:
 
             # Filter junctions by confidence
             qualified = [
-                j for j in finder_result.junctions
+                j
+                for j in finder_result.junctions
                 if j.confidence >= self.min_confidence
             ]
 
@@ -361,20 +365,15 @@ class ReadChopper:
         # Load all reads into serialisable chunks
         chunks = self._load_chunks()
         total_reads = sum(len(c) for c in chunks)
-        logger.info(
-            f"Rescuer: {total_reads:,} reads split into "
-            f"{len(chunks)} chunks"
-        )
+        logger.info(f"Rescuer: {total_reads:,} reads split into {len(chunks)} chunks")
 
         # Prepare config as dict for pickling
-        config_dict = {
-            k: v for k, v in self.config.__dict__.items()
-        }
+        config_dict = {k: v for k, v in self.config.__dict__.items()}
 
         # Submit chunks to worker pool
         # We use a dict to maintain chunk order
         merged_report = RescueReport()
-        ordered_results: dict[int, List[Tuple]] = {}
+        ordered_results: dict[int, list[tuple]] = {}
 
         with ProcessPoolExecutor(max_workers=self.threads) as executor:
             future_to_idx = {}
@@ -395,9 +394,9 @@ class ReadChopper:
                 merged_report.details.extend(details)
 
         # Reconstruct SeqRecords in original order and write
-        all_output_records: List[SeqRecord] = []
+        all_output_records: list[SeqRecord] = []
         for idx in range(len(chunks)):
-            for (rec_id, rec_seq, rec_desc, rec_quals) in ordered_results[idx]:
+            for rec_id, rec_seq, rec_desc, rec_quals in ordered_results[idx]:
                 record = SeqRecord(
                     seq=Seq(rec_seq),
                     id=rec_id,
@@ -437,25 +436,17 @@ class ReadChopper:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(self.report_path, "w") as fh:
-            fh.write(
-                "read_id\tn_junctions\tconfidences\tchop_positions\tdetails\n"
-            )
+            fh.write("read_id\tn_junctions\tconfidences\tchop_positions\tdetails\n")
 
             for fr in report.details:
-                confidences = ",".join(
-                    str(j.confidence) for j in fr.junctions
-                )
-                positions = ",".join(
-                    str(j.chop_position) for j in fr.junctions
-                )
+                confidences = ",".join(str(j.confidence) for j in fr.junctions)
+                positions = ",".join(str(j.chop_position) for j in fr.junctions)
 
                 detail_parts = []
                 for j in fr.junctions:
                     parts = []
                     if j.polya_hit:
-                        parts.append(
-                            f"polyA[{j.polya_hit.start}-{j.polya_hit.end}]"
-                        )
+                        parts.append(f"polyA[{j.polya_hit.start}-{j.polya_hit.end}]")
                     if j.rtp_rc_hit:
                         parts.append(
                             f"RTP_rc[{j.rtp_rc_hit.start}-{j.rtp_rc_hit.end}]"

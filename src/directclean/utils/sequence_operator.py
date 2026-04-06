@@ -7,7 +7,8 @@ robust homopolymer detection with dual-criteria scoring
 imperfect homopolymer regions common in Nanopore sequencing.
 """
 
-from typing import Tuple, Optional, List
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
@@ -15,24 +16,27 @@ from dataclasses import dataclass
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class HomopolymerHit:
     """Result of a homopolymer scan on a single sequence window."""
+
     is_hit: bool
-    density: float            # A/T fraction in the selected window (0.0 - 1.0)
-    longest_run_length: int   # longest consecutive A or T stretch
-    longest_run_base: str     # which base formed the longest run ('A' or 'T')
-    window_seq: str           # the selected window sequence
-    window_start: int         # 0-based start on the scanned sequence
-    window_end: int           # 0-based exclusive end on the scanned sequence
+    density: float  # A/T fraction in the selected window (0.0 - 1.0)
+    longest_run_length: int  # longest consecutive A or T stretch
+    longest_run_base: str  # which base formed the longest run ('A' or 'T')
+    window_seq: str  # the selected window sequence
+    window_start: int  # 0-based start on the scanned sequence
+    window_end: int  # 0-based exclusive end on the scanned sequence
 
 
 @dataclass(frozen=True)
 class HomopolymerRun:
     """A single homopolymer run found in a sequence."""
+
     base: str
     start: int
-    end: int      # exclusive
+    end: int  # exclusive
     length: int
 
 
@@ -68,7 +72,8 @@ def reverse_complement(sequence: str) -> str:
 # Core: homopolymer detection — pure functions
 # ---------------------------------------------------------------------------
 
-def longest_consecutive_run(sequence: str, bases: str = "AT") -> Tuple[int, str]:
+
+def longest_consecutive_run(sequence: str, bases: str = "AT") -> tuple[int, str]:
     """
     Find the longest consecutive run of any base in *bases*.
 
@@ -181,7 +186,7 @@ def scan_homopolymer(
             window_end=0,
         )
 
-    best_hit: Optional[HomopolymerHit] = None
+    best_hit: HomopolymerHit | None = None
     best_key = None  # (density, run_len, -start)
 
     for start in range(n - effective_window + 1):
@@ -228,11 +233,12 @@ def scan_homopolymer(
 # Context extraction around a junction
 # ---------------------------------------------------------------------------
 
+
 def extract_junction_context(
     sequence: str,
     position: int,
     window_size: int = 30,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """
     Extract upstream and downstream sequence around a junction position.
 
@@ -257,11 +263,12 @@ def extract_junction_context(
 # Utility: enumerate all runs (for reporting / debugging)
 # ---------------------------------------------------------------------------
 
+
 def find_all_homopolymers(
     sequence: str,
     min_length: int = 5,
     bases: str = "AT",
-) -> List[HomopolymerRun]:
+) -> list[HomopolymerRun]:
     """
     Enumerate every homopolymer run of length ≥ *min_length*.
 
@@ -282,7 +289,7 @@ def find_all_homopolymers(
     """
     seq = sequence.upper()
     target = set(bases.upper())
-    runs: List[HomopolymerRun] = []
+    runs: list[HomopolymerRun] = []
 
     i = 0
     while i < len(seq):

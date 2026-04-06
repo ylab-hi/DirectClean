@@ -22,7 +22,6 @@ from __future__ import annotations
 import re
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
 
 import pysam
 
@@ -37,6 +36,7 @@ _CIGAR_RE = re.compile(r"(\d+)([MIDNSHP=X])")
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SegmentInfo:
     """One alignment segment of a chimeric read.
@@ -50,6 +50,7 @@ class SegmentInfo:
         read_end:     0-based exclusive end on the original read sequence.
         cigar_string: Raw CIGAR string (for debugging / downstream use).
     """
+
     chrom: str
     ref_start: int
     strand: str
@@ -70,6 +71,7 @@ class JunctionInfo:
         left_segment:   The segment on the 5' side (lower read coord).
         right_segment:  The segment on the 3' side (higher read coord).
     """
+
     read_position: int
     upstream_seq: str
     downstream_seq: str
@@ -87,10 +89,11 @@ class ChimericRead:
         segments:  Ordered list of alignment segments (by read coordinate).
         junctions: Derived list of inter-segment junctions.
     """
+
     read_id: str
     sequence: str
-    segments: List[SegmentInfo] = field(default_factory=list)
-    junctions: List[JunctionInfo] = field(default_factory=list)
+    segments: list[SegmentInfo] = field(default_factory=list)
+    junctions: list[JunctionInfo] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -107,12 +110,19 @@ _CONSUMES_QUERY = {
 }
 
 _CIGAR_OP_MAP = {
-    "M": 0, "I": 1, "D": 2, "N": 3,
-    "S": 4, "H": 5, "P": 6, "=": 7, "X": 8,
+    "M": 0,
+    "I": 1,
+    "D": 2,
+    "N": 3,
+    "S": 4,
+    "H": 5,
+    "P": 6,
+    "=": 7,
+    "X": 8,
 }
 
 
-def _cigar_to_tuples(cigar_str: str) -> List[Tuple[int, int]]:
+def _cigar_to_tuples(cigar_str: str) -> list[tuple[int, int]]:
     """Convert a CIGAR string to a list of (operation, length) tuples.
 
     Matches the pysam convention: operation is an int code.
@@ -122,15 +132,14 @@ def _cigar_to_tuples(cigar_str: str) -> List[Tuple[int, int]]:
         [(4, 562), (0, 28), (2, 1), (0, 4)]
     """
     return [
-        (_CIGAR_OP_MAP[op], int(length))
-        for length, op in _CIGAR_RE.findall(cigar_str)
+        (_CIGAR_OP_MAP[op], int(length)) for length, op in _CIGAR_RE.findall(cigar_str)
     ]
 
 
 def cigar_read_span(
-    cigar_tuples: List[Tuple[int, int]],
+    cigar_tuples: list[tuple[int, int]],
     is_reverse: bool = False,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """Compute the read-coordinate span [start, end) from CIGAR tuples.
 
     **Strand handling**: when a supplementary alignment maps to the
@@ -195,7 +204,8 @@ def cigar_read_span(
 # SA tag parser
 # ---------------------------------------------------------------------------
 
-def _parse_sa_tag(sa_string: str) -> List[dict]:
+
+def _parse_sa_tag(sa_string: str) -> list[dict]:
     """Parse the SA:Z auxiliary tag into a list of segment dicts.
 
     SA format: ``rname,pos,strand,CIGAR,mapQ,NM;``  (semicolon-separated,
@@ -209,13 +219,15 @@ def _parse_sa_tag(sa_string: str) -> List[dict]:
         parts = entry.split(",")
         if len(parts) < 5:
             continue
-        segments.append({
-            "chrom": parts[0],
-            "pos": int(parts[1]),      # 1-based in SA tag
-            "strand": parts[2],
-            "cigar": parts[3],
-            "mapq": int(parts[4]),
-        })
+        segments.append(
+            {
+                "chrom": parts[0],
+                "pos": int(parts[1]),  # 1-based in SA tag
+                "strand": parts[2],
+                "cigar": parts[3],
+                "mapq": int(parts[4]),
+            }
+        )
     return segments
 
 
@@ -223,10 +235,11 @@ def _parse_sa_tag(sa_string: str) -> List[dict]:
 # Main public API
 # ---------------------------------------------------------------------------
 
+
 def parse_chimeric_read(
     alignment: pysam.AlignedSegment,
     window_size: int = 30,
-) -> Optional[ChimericRead]:
+) -> ChimericRead | None:
     """Parse a BAM alignment into a ChimericRead with junction info.
 
     Only processes reads that carry an SA (Supplementary Alignment)
@@ -267,7 +280,7 @@ def parse_chimeric_read(
         return None
 
     # ---- 1. Build segment list ----
-    segments: List[SegmentInfo] = []
+    segments: list[SegmentInfo] = []
 
     # Primary segment
     primary_cigar = alignment.cigartuples
@@ -276,30 +289,34 @@ def parse_chimeric_read(
 
     p_strand = "-" if alignment.is_reverse else "+"
     p_start, p_end = cigar_read_span(primary_cigar, is_reverse=alignment.is_reverse)
-    segments.append(SegmentInfo(
-        chrom=alignment.reference_name,
-        ref_start=alignment.reference_start,
-        strand=p_strand,
-        mapq=alignment.mapping_quality,
-        read_start=p_start,
-        read_end=p_end,
-        cigar_string=alignment.cigarstring,
-    ))
+    segments.append(
+        SegmentInfo(
+            chrom=alignment.reference_name,
+            ref_start=alignment.reference_start,
+            strand=p_strand,
+            mapq=alignment.mapping_quality,
+            read_start=p_start,
+            read_end=p_end,
+            cigar_string=alignment.cigarstring,
+        )
+    )
 
     # Supplementary segments from SA tag
     for sa_seg in _parse_sa_tag(sa_value):
         cigar_tuples = _cigar_to_tuples(sa_seg["cigar"])
         sa_is_reverse = sa_seg["strand"] == "-"
         s_start, s_end = cigar_read_span(cigar_tuples, is_reverse=sa_is_reverse)
-        segments.append(SegmentInfo(
-            chrom=sa_seg["chrom"],
-            ref_start=sa_seg["pos"] - 1,   # SA is 1-based → 0-based
-            strand=sa_seg["strand"],
-            mapq=sa_seg["mapq"],
-            read_start=s_start,
-            read_end=s_end,
-            cigar_string=sa_seg["cigar"],
-        ))
+        segments.append(
+            SegmentInfo(
+                chrom=sa_seg["chrom"],
+                ref_start=sa_seg["pos"] - 1,  # SA is 1-based → 0-based
+                strand=sa_seg["strand"],
+                mapq=sa_seg["mapq"],
+                read_start=s_start,
+                read_end=s_end,
+                cigar_string=sa_seg["cigar"],
+            )
+        )
 
     # Need at least 2 segments for a junction
     if len(segments) < 2:
@@ -309,7 +326,7 @@ def parse_chimeric_read(
     segments.sort(key=lambda s: s.read_start)
 
     # ---- 3. Identify junctions ----
-    junctions: List[JunctionInfo] = []
+    junctions: list[JunctionInfo] = []
     for i in range(len(segments) - 1):
         left = segments[i]
         right = segments[i + 1]
@@ -326,13 +343,15 @@ def parse_chimeric_read(
         upstream_seq = sequence[up_start:junction_pos]
         downstream_seq = sequence[junction_pos:dn_end]
 
-        junctions.append(JunctionInfo(
-            read_position=junction_pos,
-            upstream_seq=upstream_seq,
-            downstream_seq=downstream_seq,
-            left_segment=left,
-            right_segment=right,
-        ))
+        junctions.append(
+            JunctionInfo(
+                read_position=junction_pos,
+                upstream_seq=upstream_seq,
+                downstream_seq=downstream_seq,
+                left_segment=left,
+                right_segment=right,
+            )
+        )
 
     return ChimericRead(
         read_id=read_id,

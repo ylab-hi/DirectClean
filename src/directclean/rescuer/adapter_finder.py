@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
 
 import edlib
 
@@ -40,6 +39,7 @@ logger = logging.getLogger(__name__)
 # Result data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class AdapterHit:
     """A single fuzzy match of an adapter sequence in a read.
@@ -50,6 +50,7 @@ class AdapterHit:
         edit_distance: Number of edits (substitutions + indels).
         label:         Which adapter: 'TSO', 'RTP_rc', or 'polyA'.
     """
+
     start: int
     end: int
     edit_distance: int
@@ -69,11 +70,12 @@ class InternalJunction:
         rtp_rc_hit:    The RTP_rc hit, or None.
         tso_hit:       The TSO hit, or None.
     """
+
     chop_position: int
     confidence: int
-    polya_hit: Optional[AdapterHit]
-    rtp_rc_hit: Optional[AdapterHit]
-    tso_hit: Optional[AdapterHit]
+    polya_hit: AdapterHit | None
+    rtp_rc_hit: AdapterHit | None
+    tso_hit: AdapterHit | None
 
 
 @dataclass
@@ -86,9 +88,10 @@ class FinderResult:
         junctions:  List of InternalJunction, sorted by position.
         n_chops:    Number of chop sites (= number of junctions).
     """
+
     read_id: str
     read_len: int
-    junctions: List[InternalJunction] = field(default_factory=list)
+    junctions: list[InternalJunction] = field(default_factory=list)
 
     @property
     def n_chops(self) -> int:
@@ -103,6 +106,7 @@ class FinderResult:
 # Core search functions
 # ---------------------------------------------------------------------------
 
+
 def _find_polya_anchors(
     sequence: str,
     min_run: int,
@@ -110,7 +114,7 @@ def _find_polya_anchors(
     density_threshold: float,
     five_prime_tol: int,
     three_prime_tol: int,
-) -> List[AdapterHit]:
+) -> list[AdapterHit]:
     """Find interior poly-A regions in a read.
 
     Scans for runs of consecutive A's, then validates each run with
@@ -122,7 +126,7 @@ def _find_polya_anchors(
     """
     seq = sequence.upper()
     n = len(seq)
-    hits: List[AdapterHit] = []
+    hits: list[AdapterHit] = []
 
     i = 0
     while i < n:
@@ -152,9 +156,7 @@ def _find_polya_anchors(
             if i > n - three_prime_tol:
                 continue
 
-            hits.append(AdapterHit(
-                start=start, end=i, edit_distance=0, label="polyA"
-            ))
+            hits.append(AdapterHit(start=start, end=i, edit_distance=0, label="polyA"))
         else:
             i += 1
 
@@ -167,7 +169,7 @@ def _fuzzy_search(
     region_start: int,
     region_end: int,
     max_edit_distance: int,
-) -> Optional[AdapterHit]:
+) -> AdapterHit | None:
     """Fuzzy search for a short query in a region of the read.
 
     Uses edlib in 'HW' (semi-global) mode: the query is fully
@@ -196,10 +198,11 @@ def _fuzzy_search(
     region = seq[region_start:region_end]
 
     result = edlib.align(
-        qry, region,
-        mode="HW",                    # semi-global
-        task="locations",             # we need start/end positions
-        k=max_edit_distance,          # max edit distance cutoff
+        qry,
+        region,
+        mode="HW",  # semi-global
+        task="locations",  # we need start/end positions
+        k=max_edit_distance,  # max edit distance cutoff
     )
 
     if result["editDistance"] == -1:
@@ -227,7 +230,7 @@ def _search_all_tso(
     max_edit_distance: int,
     five_prime_tol: int,
     three_prime_tol: int,
-) -> List[AdapterHit]:
+) -> list[AdapterHit]:
     """Scan the entire read for all TSO occurrences.
 
     Used for the standalone TSO search path (catches cases where
@@ -240,7 +243,7 @@ def _search_all_tso(
     qry = tso_seq.upper()
     n = len(seq)
     qlen = len(qry)
-    hits: List[AdapterHit] = []
+    hits: list[AdapterHit] = []
 
     # Slide a window across the interior of the read
     search_start = five_prime_tol
@@ -252,7 +255,8 @@ def _search_all_tso(
     # Use edlib on the full interior region
     region = seq[search_start:search_end]
     result = edlib.align(
-        qry, region,
+        qry,
+        region,
         mode="HW",
         task="locations",
         k=max_edit_distance,
@@ -265,12 +269,14 @@ def _search_all_tso(
         abs_start = search_start + loc_start
         abs_end = search_start + loc_end + 1
 
-        hits.append(AdapterHit(
-            start=abs_start,
-            end=abs_end,
-            edit_distance=result["editDistance"],
-            label="TSO",
-        ))
+        hits.append(
+            AdapterHit(
+                start=abs_start,
+                end=abs_end,
+                edit_distance=result["editDistance"],
+                label="TSO",
+            )
+        )
 
     return hits
 
@@ -278,6 +284,7 @@ def _search_all_tso(
 # ---------------------------------------------------------------------------
 # Main finder class
 # ---------------------------------------------------------------------------
+
 
 class AdapterFinder:
     """Detect internal adapter junctions in Direct-cDNA reads.
@@ -343,14 +350,11 @@ class AdapterFinder:
             )
             if rtp_rc_hit is not None:
                 rtp_rc_hit = AdapterHit(
-                    rtp_rc_hit.start, rtp_rc_hit.end,
-                    rtp_rc_hit.edit_distance, "RTP_rc"
+                    rtp_rc_hit.start, rtp_rc_hit.end, rtp_rc_hit.edit_distance, "RTP_rc"
                 )
 
             # ---- Step 3: search for TSO downstream of RTP_rc (or polyA) ----
-            tso_search_start = (
-                rtp_rc_hit.end if rtp_rc_hit is not None else pa.end
-            )
+            tso_search_start = rtp_rc_hit.end if rtp_rc_hit is not None else pa.end
             tso_hit = _fuzzy_search(
                 seq,
                 query=cfg.tso_seq,
@@ -360,8 +364,7 @@ class AdapterFinder:
             )
             if tso_hit is not None:
                 tso_hit = AdapterHit(
-                    tso_hit.start, tso_hit.end,
-                    tso_hit.edit_distance, "TSO"
+                    tso_hit.start, tso_hit.end, tso_hit.edit_distance, "TSO"
                 )
                 used_tso_positions.add(tso_hit.start)
 
@@ -381,13 +384,15 @@ class AdapterFinder:
             else:
                 chop_pos = pa.end
 
-            result.junctions.append(InternalJunction(
-                chop_position=chop_pos,
-                confidence=confidence,
-                polya_hit=pa,
-                rtp_rc_hit=rtp_rc_hit,
-                tso_hit=tso_hit,
-            ))
+            result.junctions.append(
+                InternalJunction(
+                    chop_position=chop_pos,
+                    confidence=confidence,
+                    polya_hit=pa,
+                    rtp_rc_hit=rtp_rc_hit,
+                    tso_hit=tso_hit,
+                )
+            )
 
         # ---- Step 4: standalone TSO scan for degraded cases ----
         standalone_tso_hits = _search_all_tso(
@@ -405,20 +410,21 @@ class AdapterFinder:
 
             # Check if any existing junction is close (within 150bp)
             too_close = any(
-                abs(tso.start - j.chop_position) < 150
-                for j in result.junctions
+                abs(tso.start - j.chop_position) < 150 for j in result.junctions
             )
             if too_close:
                 continue
 
             # Standalone TSO: confidence = 1
-            result.junctions.append(InternalJunction(
-                chop_position=tso.start,
-                confidence=1,
-                polya_hit=None,
-                rtp_rc_hit=None,
-                tso_hit=tso,
-            ))
+            result.junctions.append(
+                InternalJunction(
+                    chop_position=tso.start,
+                    confidence=1,
+                    polya_hit=None,
+                    rtp_rc_hit=None,
+                    tso_hit=tso,
+                )
+            )
 
         # Deduplicate junctions at the same (or very close) chop position.
         # Keep the one with highest confidence.
@@ -434,8 +440,6 @@ class AdapterFinder:
         result.junctions = sorted(deduped, key=lambda j: j.chop_position)
 
         if result.has_internal_adapter:
-            logger.debug(
-                f"Read {read_id}: found {result.n_chops} internal junction(s)"
-            )
+            logger.debug(f"Read {read_id}: found {result.n_chops} internal junction(s)")
 
         return result

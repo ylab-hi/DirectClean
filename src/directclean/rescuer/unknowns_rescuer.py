@@ -34,7 +34,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
 
 import edlib
 from Bio.Seq import Seq
@@ -61,6 +60,7 @@ _TSO_RC = reverse_complement(_TSO)
 # Report
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class UnknownsRescueReport:
     """Summary statistics for the unknowns rescue operation.
@@ -76,6 +76,7 @@ class UnknownsRescueReport:
         oriented_unknown:   Sub-reads that could not be oriented (discarded).
         output_reads:       Final reads written to output.
     """
+
     total_unknowns: int = 0
     reads_with_adapter: int = 0
     reads_without: int = 0
@@ -89,7 +90,8 @@ class UnknownsRescueReport:
     def __str__(self) -> str:
         pct_adapter = (
             f"{self.reads_with_adapter / self.total_unknowns * 100:.1f}%"
-            if self.total_unknowns > 0 else "N/A"
+            if self.total_unknowns > 0
+            else "N/A"
         )
         return (
             "=== DirectClean Unknowns Rescue Report ===\n"
@@ -111,6 +113,7 @@ class UnknownsRescueReport:
 # ---------------------------------------------------------------------------
 # Orientation logic
 # ---------------------------------------------------------------------------
+
 
 def _fuzzy_match(seq: str, query: str, max_ed: int = 3) -> bool:
     """Check if query exists in seq within edit distance."""
@@ -185,6 +188,7 @@ def orient_subread(seq: str) -> str | None:
 # Main rescuer class
 # ---------------------------------------------------------------------------
 
+
 class UnknownsRescuer:
     """Rescue oriented sub-reads from Restrander's unknowns FASTQ.
 
@@ -228,7 +232,7 @@ class UnknownsRescuer:
 
         finder = AdapterFinder(self.config)
         report = UnknownsRescueReport()
-        output_records: List[SeqRecord] = []
+        output_records: list[SeqRecord] = []
 
         for record in read_fastq(self.unknowns_fastq):
             report.total_unknowns += 1
@@ -237,10 +241,12 @@ class UnknownsRescuer:
 
             # Step 1: detect internal adapters
             finder_result = finder.find(
-                read_id=record.id, sequence=seq,
+                read_id=record.id,
+                sequence=seq,
             )
             qualified = [
-                j for j in finder_result.junctions
+                j
+                for j in finder_result.junctions
                 if j.confidence >= self.min_confidence
             ]
 
@@ -289,8 +295,7 @@ class UnknownsRescuer:
                     id=seg_id,
                     name=seg_id,
                     description=(
-                        f"unknowns_rescued_from={record.id} "
-                        f"start={start} end={end}"
+                        f"unknowns_rescued_from={record.id} start={start} end={end}"
                     ),
                 )
 

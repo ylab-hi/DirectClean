@@ -4,8 +4,10 @@ File I/O utilities for DirectClean.
 Handles reading/writing FASTQ files with memory-efficient streaming.
 """
 
+from __future__ import annotations
+
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, List, Union, Set
 import gzip
 import logging
 from Bio import SeqIO
@@ -14,10 +16,7 @@ from Bio.SeqRecord import SeqRecord
 logger = logging.getLogger(__name__)
 
 
-def read_fastq(
-        fastq_file: Union[str, Path],
-        compressed: bool = None
-) -> Iterator[SeqRecord]:
+def read_fastq(fastq_file: str | Path, compressed: bool = None) -> Iterator[SeqRecord]:
     """
     Read FASTQ file and yield SeqRecord objects.
 
@@ -48,13 +47,13 @@ def read_fastq(
 
     # Auto-detect compression from extension
     if compressed is None:
-        compressed = fastq_file.suffix == '.gz'
+        compressed = fastq_file.suffix == ".gz"
 
     # Open with appropriate handler
     if compressed:
-        handle = gzip.open(fastq_file, 'rt')
+        handle = gzip.open(fastq_file, "rt")
     else:
-        handle = open(fastq_file, 'r')
+        handle = open(fastq_file, "r")
 
     try:
         for record in SeqIO.parse(handle, "fastq"):
@@ -64,9 +63,9 @@ def read_fastq(
 
 
 def write_fastq(
-        records: Union[List[SeqRecord], Iterator[SeqRecord]],
-        output_file: Union[str, Path],
-        compressed: bool = False
+    records: list[SeqRecord] | Iterator[SeqRecord],
+    output_file: str | Path,
+    compressed: bool = False,
 ) -> int:
     """
     Write SeqRecord objects to FASTQ file.
@@ -99,10 +98,10 @@ def write_fastq(
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Determine compression
-    if compressed or output_file.suffix == '.gz':
-        handle = gzip.open(output_file, 'wt')
+    if compressed or output_file.suffix == ".gz":
+        handle = gzip.open(output_file, "wt")
     else:
-        handle = open(output_file, 'w')
+        handle = open(output_file, "w")
 
     try:
         count = SeqIO.write(records, handle, "fastq")
@@ -112,7 +111,7 @@ def write_fastq(
         handle.close()
 
 
-def count_reads(fastq_file: Union[str, Path]) -> int:
+def count_reads(fastq_file: str | Path) -> int:
     """
     Fast read counting without loading sequences into memory.
 
@@ -135,10 +134,10 @@ def count_reads(fastq_file: Union[str, Path]) -> int:
     fastq_file = Path(fastq_file)
 
     # Open with appropriate handler
-    if fastq_file.suffix == '.gz':
-        handle = gzip.open(fastq_file, 'rt')
+    if fastq_file.suffix == ".gz":
+        handle = gzip.open(fastq_file, "rt")
     else:
-        handle = open(fastq_file, 'r')
+        handle = open(fastq_file, "r")
 
     try:
         # Count lines (FASTQ: 4 lines per record)
@@ -153,10 +152,10 @@ def count_reads(fastq_file: Union[str, Path]) -> int:
 
 
 def split_fastq_by_ids(
-        input_fastq: Union[str, Path],
-        remove_ids: Set[str],
-        output_kept: Union[str, Path],
-        output_removed: Union[str, Path]
+    input_fastq: str | Path,
+    remove_ids: set[str],
+    output_kept: str | Path,
+    output_removed: str | Path,
 ) -> tuple:
     """
     Split FASTQ into clean vs artifact reads using streaming I/O.
@@ -201,18 +200,16 @@ def split_fastq_by_ids(
     # Determine compression for each output
     def open_output(path: Path):
         """Helper to open output with correct compression."""
-        if path.suffix == '.gz':
-            return gzip.open(path, 'wt')
+        if path.suffix == ".gz":
+            return gzip.open(path, "wt")
         else:
-            return open(path, 'w')
+            return open(path, "w")
 
     kept_count = 0
     removed_count = 0
 
     # Stream through input, write directly to outputs
-    with open_output(kept_path) as f_kept, \
-            open_output(removed_path) as f_removed:
-
+    with open_output(kept_path) as f_kept, open_output(removed_path) as f_removed:
         for record in read_fastq(input_fastq):
             if record.id in remove_ids:
                 # Write to removed file immediately
@@ -223,19 +220,16 @@ def split_fastq_by_ids(
                 SeqIO.write(record, f_kept, "fastq")
                 kept_count += 1
 
-    logger.info(
-        f"Split {input_fastq}: "
-        f"{kept_count:,} kept, {removed_count:,} removed"
-    )
+    logger.info(f"Split {input_fastq}: {kept_count:,} kept, {removed_count:,} removed")
 
     return kept_count, removed_count
 
 
 def filter_fastq_by_function(
-        input_fastq: Union[str, Path],
-        output_fastq: Union[str, Path],
-        filter_func,
-        keep_filtered: bool = False
+    input_fastq: str | Path,
+    output_fastq: str | Path,
+    filter_func,
+    keep_filtered: bool = False,
 ) -> int:
     """
     Filter FASTQ using a custom function with streaming I/O.
@@ -278,10 +272,10 @@ def filter_fastq_by_function(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Determine compression
-    if output_path.suffix == '.gz':
-        handle = gzip.open(output_path, 'wt')
+    if output_path.suffix == ".gz":
+        handle = gzip.open(output_path, "wt")
     else:
-        handle = open(output_path, 'w')
+        handle = open(output_path, "w")
 
     count = 0
 
@@ -305,7 +299,7 @@ def filter_fastq_by_function(
         handle.close()
 
 
-def get_read_length_stats(fastq_file: Union[str, Path]) -> dict:
+def get_read_length_stats(fastq_file: str | Path) -> dict:
     """
     Calculate read length statistics.
 
@@ -332,20 +326,14 @@ def get_read_length_stats(fastq_file: Union[str, Path]) -> dict:
         lengths.append(len(record.seq))
 
     if not lengths:
-        return {
-            'count': 0,
-            'min': 0,
-            'max': 0,
-            'mean': 0,
-            'median': 0
-        }
+        return {"count": 0, "min": 0, "max": 0, "mean": 0, "median": 0}
 
     lengths.sort()
 
     return {
-        'count': len(lengths),
-        'min': min(lengths),
-        'max': max(lengths),
-        'mean': sum(lengths) / len(lengths),
-        'median': lengths[len(lengths) // 2]
+        "count": len(lengths),
+        "min": min(lengths),
+        "max": max(lengths),
+        "mean": sum(lengths) / len(lengths),
+        "median": lengths[len(lengths) // 2],
     }

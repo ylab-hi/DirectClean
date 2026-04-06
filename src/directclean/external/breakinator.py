@@ -26,7 +26,6 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Set, Tuple
 
 from directclean.external.dependencies import check_binary
 from directclean.utils.io import split_fastq_by_ids
@@ -60,7 +59,7 @@ def _check_breakinator_version(binary: str) -> None:
         logger.warning(f"Could not parse breakinator version from: {output!r}")
         return
 
-    version: Tuple[int, ...] = tuple(int(x) for x in match.groups())
+    version: tuple[int, ...] = tuple(int(x) for x in match.groups())
     if version < _MIN_BREAKINATOR_VERSION:
         min_ver = ".".join(str(v) for v in _MIN_BREAKINATOR_VERSION)
         cur_ver = ".".join(str(v) for v in version)
@@ -131,7 +130,7 @@ def _run_minimap2_for_breakinator(
     input_fastq: Path,
     output_sam: Path,
     threads: int,
-    junc_bed: Optional[Path] = None,
+    junc_bed: Path | None = None,
 ) -> None:
     """Run minimap2 to produce a SAM file for Breakinator.
 
@@ -222,7 +221,7 @@ def _run_breakinator(
     logger.info(f"Artifacts written: {output_artifacts}")
 
 
-def _parse_foldback_ids(artifacts_file: Path) -> tuple[Set[str], dict]:
+def _parse_foldback_ids(artifacts_file: Path) -> tuple[set[str], dict]:
     """Parse Breakinator tabular output and extract Foldback read IDs.
 
     Only Foldback reads are removed — Chimeric reads are left for
@@ -235,7 +234,7 @@ def _parse_foldback_ids(artifacts_file: Path) -> tuple[Set[str], dict]:
         (foldback_ids, breakpoint_stats) where breakpoint_stats has
         counts for each classification.
     """
-    foldback_ids: Set[str] = set()
+    foldback_ids: set[str] = set()
     stats = {"total": 0, "Foldback": 0, "Chimeric": 0, "Pass": 0}
 
     with open(artifacts_file) as fh:
@@ -296,7 +295,7 @@ class BreakinatorRunner:
         self,
         reference: Path,
         threads: int = 4,
-        junc_bed: Optional[Path] = None,
+        junc_bed: Path | None = None,
     ) -> None:
         self.reference = Path(reference)
         self.threads = threads

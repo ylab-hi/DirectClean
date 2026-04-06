@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List
 
 from directclean.filter.junction_parser import ChimericRead, JunctionInfo
 from directclean.utils.sequence_operator import HomopolymerHit, scan_homopolymer
@@ -22,9 +21,11 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class HomopolymerConfig:
     """Tuneable parameters for the homopolymer filter."""
+
     scan_window: int = 10
     density_threshold: float = 0.85
     min_run: int = 5
@@ -36,9 +37,11 @@ class HomopolymerConfig:
 # Per-junction verdict
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class JunctionVerdict:
     """Artifact verdict for a single junction."""
+
     junction: JunctionInfo
     is_artifact: bool
     upstream_hit: HomopolymerHit
@@ -50,12 +53,14 @@ class JunctionVerdict:
 # Per-read verdict
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ReadVerdict:
     """Artifact verdict for an entire read."""
+
     read_id: str
     is_artifact: bool
-    junction_verdicts: List[JunctionVerdict]
+    junction_verdicts: list[JunctionVerdict]
     n_junctions: int
     n_artifact_junctions: int
 
@@ -63,6 +68,7 @@ class ReadVerdict:
 # ---------------------------------------------------------------------------
 # Detector class
 # ---------------------------------------------------------------------------
+
 
 class HomopolymerDetector:
     """Configurable detector for homopolymer-mediated RT artifacts."""
@@ -121,9 +127,7 @@ class HomopolymerDetector:
                 center = (start + end) / 2.0
 
                 crosses_boundary = (
-                    (start < boundary < end)
-                    or (start == boundary)
-                    or (end == boundary)
+                    (start < boundary < end) or (start == boundary) or (end == boundary)
                 )
 
                 if crosses_boundary:
@@ -146,7 +150,7 @@ class HomopolymerDetector:
 
     def judge_read(self, chimeric_read: ChimericRead) -> ReadVerdict:
         """Evaluate all junctions of a chimeric read."""
-        verdicts: List[JunctionVerdict] = []
+        verdicts: list[JunctionVerdict] = []
         n_artifact = 0
 
         for junc in chimeric_read.junctions:

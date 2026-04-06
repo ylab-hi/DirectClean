@@ -39,7 +39,6 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from directclean.external.breakinator import BreakinatorRunner, BreakReport
 from directclean.external.restrander import RestranderRunner, RestranderReport
@@ -60,6 +59,7 @@ logger = logging.getLogger(__name__)
 # Pipeline configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PipelineConfig:
     """All tuneable parameters for the full pipeline.
@@ -73,13 +73,14 @@ class PipelineConfig:
         threads:            Threads for minimap2, samtools, breakinator.
         junc_bed:           Optional junction BED for Breakinator alignment.
     """
+
     adapter_config: AdapterConfig = None
     homopolymer_config: HomopolymerConfig = None
     min_confidence: int = 2
     context_window: int = 50
     min_mapq: int = 0
     threads: int = 4
-    junc_bed: Optional[Path] = None
+    junc_bed: Path | None = None
 
     def __post_init__(self):
         if self.adapter_config is None:
@@ -92,6 +93,7 @@ class PipelineConfig:
 # Pipeline report
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PipelineReport:
     """Combined report from all pipeline stages.
@@ -103,11 +105,12 @@ class PipelineReport:
         filter_report:     Report from Homopolymer Rescue (Stage 5).
         elapsed_seconds:   Total wall-clock time.
     """
-    break_report: Optional[BreakReport] = None
-    restrander_report: Optional[RestranderReport] = None
-    unknowns_rescue_report: Optional[UnknownsRescueReport] = None
-    rescue_report: Optional[RescueReport] = None
-    filter_report: Optional[FilterReport] = None
+
+    break_report: BreakReport | None = None
+    restrander_report: RestranderReport | None = None
+    unknowns_rescue_report: UnknownsRescueReport | None = None
+    rescue_report: RescueReport | None = None
+    filter_report: FilterReport | None = None
     elapsed_seconds: float = 0.0
 
     def __str__(self) -> str:
@@ -146,6 +149,7 @@ class PipelineReport:
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
+
 
 class DirectCleanPipeline:
     """End-to-end DirectClean pipeline.
@@ -194,13 +198,9 @@ class DirectCleanPipeline:
 
         # Validate inputs
         if not self.input_fastq.exists():
-            raise FileNotFoundError(
-                f"Input FASTQ not found: {self.input_fastq}"
-            )
+            raise FileNotFoundError(f"Input FASTQ not found: {self.input_fastq}")
         if not self.reference.exists():
-            raise FileNotFoundError(
-                f"Reference not found: {self.reference}"
-            )
+            raise FileNotFoundError(f"Reference not found: {self.reference}")
 
         # Validate external dependencies up front
         check_all_dependencies()
@@ -309,7 +309,9 @@ class DirectCleanPipeline:
 
     # ---- Stage 2.5: Unknowns Rescue ----
 
-    def _run_unknowns_rescue(self, restranded_fastq: Path) -> tuple[Path, UnknownsRescueReport]:
+    def _run_unknowns_rescue(
+        self, restranded_fastq: Path
+    ) -> tuple[Path, UnknownsRescueReport]:
         """Stage 2.5: rescue oriented reads from Restrander unknowns.
 
         Scans the unknowns FASTQ for internal adapter junctions, chops
@@ -503,7 +505,9 @@ class DirectCleanPipeline:
         pipeline_report.restrander_report = restrander_report
 
         # Stage 2.5: Unknowns Rescue
-        unknowns_rescued_fastq, unknowns_report = self._run_unknowns_rescue(stage2_fastq)
+        unknowns_rescued_fastq, unknowns_report = self._run_unknowns_rescue(
+            stage2_fastq
+        )
         pipeline_report.unknowns_rescue_report = unknowns_report
 
         # Stage 3: Rescuer (only on Restrander normal output, not unknowns)
@@ -511,7 +515,9 @@ class DirectCleanPipeline:
         pipeline_report.rescue_report = rescue_report
 
         # Merge Stage 3 output + Stage 2.5 rescued reads → Stage 4 input
-        stage4_input = self._merge_for_alignment(stage3_fastq, unknowns_rescued_fastq, unknowns_report)
+        stage4_input = self._merge_for_alignment(
+            stage3_fastq, unknowns_rescued_fastq, unknowns_report
+        )
 
         # Stage 4: Minimap2
         bam = self._run_alignment(stage4_input)
@@ -530,6 +536,7 @@ class DirectCleanPipeline:
     def _version(self) -> str:
         try:
             from directclean import __version__
+
             return __version__
         except ImportError:
             return "unknown"

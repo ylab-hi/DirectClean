@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +19,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Registry of required tools
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ExternalTool:
@@ -31,6 +31,7 @@ class ExternalTool:
         install_hint:    How the user can install it.
         required:        Whether the pipeline cannot run without it.
     """
+
     name: str
     description: str
     install_hint: str
@@ -38,7 +39,7 @@ class ExternalTool:
 
 
 # All tools DirectClean depends on
-REQUIRED_TOOLS: List[ExternalTool] = [
+REQUIRED_TOOLS: list[ExternalTool] = [
     ExternalTool(
         name="minimap2",
         description="Long-read splice-aware aligner",
@@ -66,6 +67,7 @@ REQUIRED_TOOLS: List[ExternalTool] = [
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def check_binary(name: str) -> str:
     """Check that a single binary is available on PATH.
 
@@ -81,13 +83,12 @@ def check_binary(name: str) -> str:
     path = shutil.which(name)
     if path is None:
         raise FileNotFoundError(
-            f"Required tool '{name}' not found on PATH. "
-            f"Please install it first."
+            f"Required tool '{name}' not found on PATH. Please install it first."
         )
     return path
 
 
-def check_all_dependencies() -> Dict[str, str]:
+def check_all_dependencies() -> dict[str, str]:
     """Validate all required external tools are available.
 
     Returns:
@@ -97,8 +98,8 @@ def check_all_dependencies() -> Dict[str, str]:
         FileNotFoundError: Lists *all* missing tools (not just the
             first one) so the user can fix everything at once.
     """
-    found: Dict[str, str] = {}
-    missing: List[ExternalTool] = []
+    found: dict[str, str] = {}
+    missing: list[ExternalTool] = []
 
     for tool in REQUIRED_TOOLS:
         path = shutil.which(tool.name)

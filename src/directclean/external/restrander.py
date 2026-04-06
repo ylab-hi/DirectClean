@@ -22,7 +22,6 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from directclean.external.dependencies import check_binary
 
@@ -37,6 +36,7 @@ DEFAULT_CONFIG = _CONFIGS_DIR / "PCB109.json"
 # Report
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RestranderReport:
     """Summary statistics from the Restrander stage.
@@ -50,6 +50,7 @@ class RestranderReport:
         tso_tso:          TSO-TSO artefacts (excluded).
         output_reads:     Reads in the output FASTQ (forward + reverse).
     """
+
     total_input: int = 0
     forward: int = 0
     reverse: int = 0
@@ -65,15 +66,18 @@ class RestranderReport:
     def __str__(self) -> str:
         pct_kept = (
             f"{self.output_reads / self.total_input * 100:.1f}%"
-            if self.total_input > 0 else "N/A"
+            if self.total_input > 0
+            else "N/A"
         )
         pct_artefact = (
             f"{self.total_artefacts / self.total_input * 100:.1f}%"
-            if self.total_input > 0 else "N/A"
+            if self.total_input > 0
+            else "N/A"
         )
         pct_unknown = (
             f"{self.unknown / self.total_input * 100:.1f}%"
-            if self.total_input > 0 else "N/A"
+            if self.total_input > 0
+            else "N/A"
         )
         return (
             "=== Restrander Report ===\n"
@@ -93,6 +97,7 @@ class RestranderReport:
 # ---------------------------------------------------------------------------
 # Stats parser
 # ---------------------------------------------------------------------------
+
 
 def _strip_ansi(text: str) -> str:
     """Remove ANSI escape codes from text.
@@ -157,12 +162,11 @@ def _parse_restrander_output(raw_output: str) -> RestranderReport:
 
     if json_start < 0 or json_end < 0:
         logger.warning(
-            "Could not find JSON in Restrander output. "
-            "Statistics will be unavailable."
+            "Could not find JSON in Restrander output. Statistics will be unavailable."
         )
         return report
 
-    json_str = cleaned[json_start:json_end + 1]
+    json_str = cleaned[json_start : json_end + 1]
 
     try:
         data = json.loads(json_str)
@@ -200,6 +204,7 @@ def _parse_restrander_output(raw_output: str) -> RestranderReport:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 class RestranderRunner:
     """Restrander wrapper for strand orientation correction.
 
@@ -221,14 +226,12 @@ class RestranderRunner:
 
     def __init__(
         self,
-        config_json: Optional[Path] = None,
+        config_json: Path | None = None,
     ) -> None:
         self.config_json = Path(config_json) if config_json else DEFAULT_CONFIG
 
         if not self.config_json.exists():
-            raise FileNotFoundError(
-                f"Restrander config not found: {self.config_json}"
-            )
+            raise FileNotFoundError(f"Restrander config not found: {self.config_json}")
 
     def run(
         self,
