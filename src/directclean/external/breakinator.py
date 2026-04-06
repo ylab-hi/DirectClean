@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 # Report
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class BreakReport:
     """Summary statistics from the Breakinator stage.
@@ -51,6 +52,7 @@ class BreakReport:
         kept_reads:         Reads after removing foldback.
         removed_reads:      Foldback reads removed.
     """
+
     total_breakpoints: int = 0
     foldback_count: int = 0
     chimeric_count: int = 0
@@ -63,7 +65,8 @@ class BreakReport:
     def __str__(self) -> str:
         pct = (
             f"{self.removed_reads / self.input_reads * 100:.1f}%"
-            if self.input_reads > 0 else "N/A"
+            if self.input_reads > 0
+            else "N/A"
         )
         return (
             "=== Breakinator Report ===\n"
@@ -82,6 +85,7 @@ class BreakReport:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _run_minimap2_for_breakinator(
     reference: Path,
@@ -107,12 +111,14 @@ def _run_minimap2_for_breakinator(
 
     cmd = [
         minimap2_bin,
-        "-Y",                  # soft-clip with original sequence
-        "-t", str(threads),
-        "-ax", "splice",       # splice-aware
-        "-uf",                 # forward strand for Direct-cDNA
-        "-k14",                # k-mer size
-        "--secondary=no",      # no secondary alignments
+        "-Y",  # soft-clip with original sequence
+        "-t",
+        str(threads),
+        "-ax",
+        "splice",  # splice-aware
+        "-uf",  # forward strand for Direct-cDNA
+        "-k14",  # k-mer size
+        "--secondary=no",  # no secondary alignments
     ]
 
     if junc_bed is not None:
@@ -131,9 +137,7 @@ def _run_minimap2_for_breakinator(
         )
 
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"minimap2 failed (exit {proc.returncode}):\n{proc.stderr}"
-        )
+        raise RuntimeError(f"minimap2 failed (exit {proc.returncode}):\n{proc.stderr}")
 
     logger.info(f"SAM written: {output_sam}")
 
@@ -154,9 +158,10 @@ def _run_breakinator(
 
     cmd = [
         breakinator_bin,
-        "-i", str(input_sam),
-        "-o", str(output_artifacts),
-        "-t", str(threads),
+        "-i",
+        str(input_sam),
+        "-o",
+        str(output_artifacts),
         "--tabular",
     ]
 
@@ -221,6 +226,7 @@ def _parse_foldback_ids(artifacts_file: Path) -> tuple[Set[str], dict]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 class BreakinatorRunner:
     """End-to-end Breakinator wrapper for foldback removal.
