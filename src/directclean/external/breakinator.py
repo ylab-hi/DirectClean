@@ -199,6 +199,8 @@ def _run_breakinator(
         breakinator_bin,
         "-i",
         str(input_sam),
+        "-t",
+        str(threads),
         "-o",
         str(output_artifacts),
         "--tabular",
