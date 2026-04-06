@@ -22,15 +22,54 @@ not a coordinate-sorted BAM.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional, Set, Tuple
 
 from directclean.external.dependencies import check_binary
 from directclean.utils.io import split_fastq_by_ids
 
 logger = logging.getLogger(__name__)
+
+_MIN_BREAKINATOR_VERSION = (1, 1, 1)
+
+
+def _check_breakinator_version(binary: str) -> None:
+    """Verify that the installed breakinator is >= 1.1.1 (Rust version).
+
+    The old Python-based breakinator (<=1.0.x) expects PAF input and will
+    crash with an IndexError when given SAM.  DirectClean requires the
+    Rust rewrite (>=1.1.1) which natively accepts SAM/BAM/CRAM.
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        output = (proc.stdout + proc.stderr).strip()
+    except Exception:
+        return  # If we can't check, let the actual run surface errors
+
+    # Match version strings like "breakinator 1.1.1" or "1.1.1"
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", output)
+    if match is None:
+        logger.warning(f"Could not parse breakinator version from: {output!r}")
+        return
+
+    version: Tuple[int, ...] = tuple(int(x) for x in match.groups())
+    if version < _MIN_BREAKINATOR_VERSION:
+        min_ver = ".".join(str(v) for v in _MIN_BREAKINATOR_VERSION)
+        cur_ver = ".".join(str(v) for v in version)
+        raise RuntimeError(
+            f"breakinator {cur_ver} is too old. DirectClean requires "
+            f">= {min_ver} (the Rust version) which accepts SAM input. "
+            f"The old Python version expects PAF and will fail. "
+            f"Please update: conda install -c bioconda 'breakinator>={min_ver}'"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +194,7 @@ def _run_breakinator(
         threads:           Number of threads.
     """
     breakinator_bin = check_binary("breakinator")
+    _check_breakinator_version(breakinator_bin)
 
     cmd = [
         breakinator_bin,

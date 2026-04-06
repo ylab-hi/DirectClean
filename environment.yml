@@ -8,5 +8,5 @@ dependencies:
   - python>=3.10
   - minimap2
   - samtools
-  - breakinator
+  - breakinator>=1.1.1
   - restrander
