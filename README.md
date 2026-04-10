@@ -132,6 +132,14 @@ results/
 
 The primary output is `directclean.cleaned.fastq`. This file contains all reads that passed the pipeline plus rescued sub-reads from Stages 3, 4, and 5, ready for downstream transcript quantification (e.g., IsoQuant, FLAIR) and gene fusion calling (e.g., FusionSeeker, JAFFAL).
 
+### HTML Report
+
+DirectClean generates an interactive HTML report with per-stage statistics and read flow visualization.
+
+<p align="center">
+  <img src="assets/html.png" width="800" alt="DirectClean HTML Report Preview">
+</p>
+
 ## Citation
 
 If you use DirectClean in your research, please cite our manuscript along with the foundational tools integrated into this pipeline:
