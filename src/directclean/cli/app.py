@@ -194,8 +194,8 @@ def main(
         help="Enable debug logging.",
     ),
     html_report: bool = typer.Option(
-        False,
-        "--html-report",
+        True,
+        "--html-report/--no-html-report",
         help="Generate an interactive HTML summary report with charts.",
     ),
     version: bool | None = typer.Option(
