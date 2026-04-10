@@ -151,7 +151,7 @@ def main(
         min=5,
     ),
     density_threshold: float = typer.Option(
-        0.8,
+        0.85,
         "--density-threshold",
         help="Minimum A/T fraction in scanning window to flag.",
         min=0.5,
