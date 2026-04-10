@@ -23,14 +23,30 @@ from directclean.filter.homopolymer import HomopolymerConfig
 
 console = Console()
 
+LOGO = """
+[bold cyan]╔══════════════════════════════════════════════════════════════╗
+║  ____  _               _    ____ _                          ║
+║ |  _ \\(_)_ __ ___  ___| |_ / ___| | ___  __ _ _ __         ║
+║ | | | | | '__/ _ \\/ __| __| |   | |/ _ \\/ _` | '_ \\        ║
+║ | |_| | | | |  __/ (__| |_| |___| |  __/ (_| | | | |       ║
+║ |____/|_|_|  \\___|\\___|\\__|\\____|_|\\___|\\__,_|_| |_|       ║
+╚══════════════════════════════════════════════════════════════╝[/]
+"""
+
+HELP_TEXT = (
+    "DirectClean — Strand orientation, artifact removal, and chimeric "
+    "read rescue for Oxford Nanopore direct-cDNA sequencing.\n\n"
+    "Removes foldback inversions and homopolymer-mediated RT template "
+    "switching artifacts that existing tools do not address. "
+    "Chimeric reads are chopped at artifact junctions and flanking "
+    "sub-reads are rescued.\n\n"
+    "Pipeline: Breakinator → Restrander → Unknowns Rescue → "
+    "Adapter Rescue → Homopolymer Rescue"
+)
+
 app = typer.Typer(
     name="directclean",
-    help=(
-        "DirectClean — Remove RT artifacts from Oxford Nanopore "
-        "Direct-cDNA sequencing data.\n\n"
-        "Processes raw FASTQ through five stages: "
-        "Breakinator → Restrander → Rescuer → Minimap2 → Homopolymer Filter."
-    ),
+    help=HELP_TEXT,
     add_completion=False,
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -56,7 +72,8 @@ def _setup_logging(verbose: bool) -> None:
 
 def _version_callback(value: bool) -> None:
     if value:
-        console.print(f"DirectClean v{__version__}")
+        console.print(LOGO)
+        console.print(f"  v{__version__}")
         raise typer.Exit()
 
 
@@ -191,19 +208,26 @@ def main(
     ),
 ) -> None:
     """
-    Remove RT artifacts from Oxford Nanopore Direct-cDNA sequencing data.
-
-    DirectClean processes raw FASTQ files through five stages:
+    Strand orientation, artifact removal, and chimeric read rescue
+    for Oxford Nanopore direct-cDNA sequencing.
 
     \b
-    1. BREAKINATOR:  Remove foldback inversion artifacts.
-    2. RESTRANDER:   Correct strand orientation, trim primers.
-    3. RESCUER:      Detect internal TSO/RTP adapters, chop chimeric reads.
-    4. MINIMAP2:     Splice-aware alignment to reference genome.
-    5. FILTER:       Remove chimeric junctions caused by RT template
-                     switching at poly-A/T homopolymer regions.
+    Pipeline stages:
+      1. BREAKINATOR        Remove foldback inversion artifacts
+      2. RESTRANDER         Orient reads 5'→3', remove primer artifacts
+      3. UNKNOWNS RESCUE    Recover orientable reads from Restrander unknowns
+      4. ADAPTER RESCUE     Detect internal TSO/RTP adapters, chop and rescue
+      5. HOMOPOLYMER RESCUE Detect RT template switching at A/T-rich junctions
+
+    \b
+    Stages 1-2 remove artifactual reads.
+    Stages 3-5 chop chimeric reads at artifact junctions and rescue
+    flanking sub-reads — no reads are discarded.
     """
     _setup_logging(verbose)
+
+    # Print logo at pipeline start
+    console.print(LOGO)
 
     # Build configuration from CLI options
     adapter_cfg = AdapterConfig(
