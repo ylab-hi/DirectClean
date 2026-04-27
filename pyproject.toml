@@ -1,12 +1,24 @@
 [tool.poetry]
 name = "directclean"
 version = "0.1.0"
-description = "Remove RT artifacts from Direct-cDNA sequencing"
+description = "Strand orientation, artifact removal, and chimeric read rescue for ONT direct-cDNA, eliminates foldback inversions and homopolymer RT template switching artifacts"
 authors = ["Qingxiang Guo <qingxiang.guo@northwestern.edu>"]
 license = "MIT"
 readme = "README.md"
+homepage = "https://github.com/ylab-hi/DirectClean"
+repository = "https://github.com/ylab-hi/DirectClean"
+keywords = ["nanopore", "direct-cdna", "rna-seq", "preprocessing", "chimeric-read", "rt-artifact"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 packages = [{include = "directclean", from = "src"}]
 include = ["src/directclean/external/configs/*.json"]
+
 
 [tool.poetry.dependencies]
 python = "^3.10"
