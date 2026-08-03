@@ -249,7 +249,7 @@ class DirectCleanPipeline:
 
     @property
     def _aligned_bam(self) -> Path:
-        return self._intermediates_dir / f"{self.prefix}.aligned.sorted.bam"
+        return self._intermediates_dir / f"{self.prefix}.aligned.bam"
 
     @property
     def cleaned_fastq(self) -> Path:
@@ -423,7 +423,7 @@ class DirectCleanPipeline:
             fastq: Rescued FASTQ from Stage 3.
 
         Returns:
-            Path to sorted, indexed BAM.
+            Path to the alignment-order BAM.
         """
         logger.info("=" * 55)
         logger.info("Stage 4/5: Minimap2 — splice-aware alignment")

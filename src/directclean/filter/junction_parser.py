@@ -372,7 +372,7 @@ def iter_chimeric_reads(
     deduplicated by processing only primary alignments.
 
     Args:
-        bam_path:    Path to a coordinate-sorted, indexed BAM file.
+        bam_path:    Path to a BAM file; sorting and indexing are not required.
         window_size: Context window for junction extraction.
         min_mapq:    Skip reads with mapping quality below this.
 
@@ -380,7 +380,7 @@ def iter_chimeric_reads(
         ChimericRead objects.
     """
     with pysam.AlignmentFile(bam_path, "rb") as bam:
-        for aln in bam.fetch():
+        for aln in bam.fetch(until_eof=True):
             # Skip secondary; supplementary handled inside parse_chimeric_read
             if aln.is_secondary:
                 continue

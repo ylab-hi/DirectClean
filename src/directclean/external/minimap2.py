@@ -1,10 +1,11 @@
 """
 Minimap2 alignment wrapper for DirectClean.
 
-Runs minimap2 with Direct-cDNA-optimised parameters, pipes output
-through samtools sort, and builds a BAM index.  All external calls
-go through a single helper so that logging, error handling, and
-dry-run support live in one place.
+Runs minimap2 with Direct-cDNA-optimised parameters and converts the
+SAM stream directly to an alignment-order BAM with samtools view.
+Coordinate sorting and BAM indexing are intentionally skipped because
+the downstream homopolymer classifier scans the complete BAM
+sequentially and does not perform genomic-region queries.
 
 Typical usage::
 
@@ -16,7 +17,7 @@ Typical usage::
     )
     bam_path = aligner.align(
         fastq="reads.fastq",
-        output_bam="results/aligned.sorted.bam",
+        output_bam="results/aligned.bam",
     )
 """
 
@@ -54,38 +55,6 @@ def _check_binary(name: str) -> str:
             f"Please install {name} and ensure it is accessible."
         )
     return path
-
-
-def _run(cmd: list[str], description: str, **kwargs) -> subprocess.CompletedProcess:
-    """Run a command with logging and error handling.
-
-    Args:
-        cmd:         Command as a list of strings.
-        description: Human-readable description for log messages.
-        **kwargs:    Forwarded to subprocess.run().
-
-    Returns:
-        CompletedProcess instance.
-
-    Raises:
-        subprocess.CalledProcessError: If the command exits non-zero.
-    """
-    cmd_str = " ".join(cmd)
-    logger.info(f"[{description}] {cmd_str}")
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        **kwargs,
-    )
-
-    if result.returncode != 0:
-        logger.error(f"[{description}] failed (exit {result.returncode})")
-        logger.error(f"  stderr: {result.stderr.strip()}")
-        result.check_returncode()  # raises CalledProcessError
-
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -142,19 +111,23 @@ class Minimap2Aligner:
         fastq: str | Path,
         output_bam: str | Path,
     ) -> Path:
-        """Align FASTQ to reference and produce a sorted, indexed BAM.
+        """Align FASTQ to reference and produce an alignment-order BAM.
 
         Pipeline::
 
-            minimap2 ... ref.fa reads.fq | samtools sort → sorted.bam
-            samtools index sorted.bam
+            minimap2 ... ref.fa reads.fq | samtools view -b → aligned.bam
+
+        The BAM is intentionally not coordinate-sorted or indexed.
+        DirectClean scans every alignment sequentially and does not perform
+        genomic-region queries, so sorting and indexing add unnecessary
+        memory, runtime, temporary-file, and I/O costs.
 
         Args:
             fastq:      Input FASTQ file (plain or gzipped).
-            output_bam: Path for the output sorted BAM.
+            output_bam: Path for the output BAM.
 
         Returns:
-            Path to the sorted, indexed BAM file.
+            Path to the alignment-order BAM file.
 
         Raises:
             FileNotFoundError:              If input files are missing.
@@ -166,14 +139,9 @@ class Minimap2Aligner:
         if not fastq.exists():
             raise FileNotFoundError(f"FASTQ not found: {fastq}")
 
-        # Create output directory
         output_bam.parent.mkdir(parents=True, exist_ok=True)
 
-        # --- Step 1: minimap2 | samtools sort ---
-        self._align_and_sort(fastq, output_bam)
-
-        # --- Step 2: samtools index ---
-        self._index(output_bam)
+        self._align_to_bam(fastq, output_bam)
 
         logger.info(f"Alignment complete: {output_bam}")
         return output_bam
@@ -200,76 +168,74 @@ class Minimap2Aligner:
         ]
         return cmd
 
-    def _build_samtools_sort_cmd(self, output_bam: Path) -> list[str]:
-        """Construct the samtools sort command."""
+    def _build_samtools_view_cmd(self, output_bam: Path) -> list[str]:
+        """Construct the samtools view command for SAM-to-BAM conversion."""
         return [
             "samtools",
-            "sort",
+            "view",
             "-@",
             str(self.threads),
-            "-O",
-            "BAM",
+            "-b",
             "-o",
             str(output_bam),
-            "-",  # read from stdin
+            "-",  # read SAM from stdin
         ]
 
-    def _align_and_sort(self, fastq: Path, output_bam: Path) -> None:
-        """Run minimap2 piped into samtools sort.
+    def _align_to_bam(self, fastq: Path, output_bam: Path) -> None:
+        """Run minimap2 piped directly into samtools view.
 
-        Uses two subprocesses connected by a pipe, avoiding a
-        temporary SAM file that could be hundreds of GB.
+        The output preserves minimap2 alignment order. It is not
+        coordinate-sorted and does not require a BAM index for DirectClean's
+        sequential downstream scan.
         """
         mm2_cmd = self._build_minimap2_cmd(fastq)
-        sort_cmd = self._build_samtools_sort_cmd(output_bam)
+        view_cmd = self._build_samtools_view_cmd(output_bam)
 
         logger.info(f"[minimap2] {' '.join(mm2_cmd)}")
-        logger.info(f"[samtools sort] {' '.join(sort_cmd)}")
+        logger.info(f"[samtools view] {' '.join(view_cmd)}")
 
-        # minimap2 stdout → samtools sort stdin
+        # minimap2 SAM stdout → samtools view BAM conversion
         mm2_proc = subprocess.Popen(
             mm2_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        sort_proc = subprocess.Popen(
-            sort_cmd,
+        view_proc = subprocess.Popen(
+            view_cmd,
             stdin=mm2_proc.stdout,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
 
-        # Allow mm2 to receive SIGPIPE if sort exits early
+        if mm2_proc.stdout is None or mm2_proc.stderr is None:
+            raise RuntimeError("Failed to create minimap2 subprocess pipes")
+
+        # Allow minimap2 to receive SIGPIPE if samtools exits early.
         mm2_proc.stdout.close()
 
-        # Wait for both processes
-        sort_stdout, sort_stderr = sort_proc.communicate()
+        _, view_stderr = view_proc.communicate()
         mm2_stderr = mm2_proc.stderr.read()
         mm2_proc.wait()
 
-        # Log minimap2 stats (written to stderr)
         if mm2_stderr:
             for line in mm2_stderr.decode().strip().split("\n"):
                 logger.debug(f"  [minimap2] {line}")
 
-        # Check exit codes
         if mm2_proc.returncode != 0:
             logger.error(f"minimap2 failed (exit {mm2_proc.returncode})")
             logger.error(mm2_stderr.decode())
             raise subprocess.CalledProcessError(
-                mm2_proc.returncode, mm2_cmd, stderr=mm2_stderr
+                mm2_proc.returncode,
+                mm2_cmd,
+                stderr=mm2_stderr,
             )
 
-        if sort_proc.returncode != 0:
-            logger.error(f"samtools sort failed (exit {sort_proc.returncode})")
-            logger.error(sort_stderr.decode())
+        if view_proc.returncode != 0:
+            logger.error(f"samtools view failed (exit {view_proc.returncode})")
+            logger.error(view_stderr.decode())
             raise subprocess.CalledProcessError(
-                sort_proc.returncode, sort_cmd, stderr=sort_stderr
+                view_proc.returncode,
+                view_cmd,
+                stderr=view_stderr,
             )
 
-    def _index(self, bam_path: Path) -> None:
-        """Run samtools index."""
-        _run(
-            ["samtools", "index", str(bam_path)],
-            description="samtools index",
-        )

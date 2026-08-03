@@ -183,7 +183,7 @@ class ArtifactClassifier:
            write rescued sub-reads (≥100 bp) to output.
 
     Args:
-        bam_path:      Path to minimap2 BAM (sorted & indexed).
+        bam_path:      Path to minimap2 BAM; sorting and indexing are not required.
         input_fastq:   Original FASTQ that was aligned.
         output_dir:    Directory for output files.
         config:        HomopolymerConfig with detection parameters.
