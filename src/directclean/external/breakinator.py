@@ -3,7 +3,7 @@ Breakinator wrapper — remove foldback inversion artifacts.
 
 Breakinator detects two types of artifacts in Direct-cDNA reads:
 *foldback inversions* (hairpin structures from sequencing) and
-*chimeric reads* (ligation artifacts).  DirectClean only removes
+*chimeric reads* (ligation artifacts). DirectClean only removes
 **foldback** reads because chimeric reads are handled downstream
 by our own Rescuer and Homopolymer Filter modules.
 
@@ -15,60 +15,24 @@ The workflow mirrors the manual steps::
     4. split_fastq_by_ids → keep non-foldback reads
 
 Note: This minimap2 run is independent from Stage 4 (the alignment
-used by the Homopolymer Filter).  Breakinator requires a SAM file,
+used by the Homopolymer Filter). Breakinator requires a SAM file,
 not a coordinate-sorted BAM.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from directclean.external.dependencies import check_binary
+from directclean.external.dependencies import (
+    check_binary,
+    check_breakinator_compatibility,
+)
 from directclean.utils.io import split_fastq_by_ids
 
 logger = logging.getLogger(__name__)
-
-_MIN_BREAKINATOR_VERSION = (1, 1, 1)
-
-
-def _check_breakinator_version(binary: str) -> None:
-    """Verify that the installed breakinator is >= 1.1.1 (Rust version).
-
-    The old Python-based breakinator (<=1.0.x) expects PAF input and will
-    crash with an IndexError when given SAM.  DirectClean requires the
-    Rust rewrite (>=1.1.1) which natively accepts SAM/BAM/CRAM.
-    """
-    try:
-        proc = subprocess.run(
-            [binary, "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        output = (proc.stdout + proc.stderr).strip()
-    except Exception:
-        return  # If we can't check, let the actual run surface errors
-
-    # Match version strings like "breakinator 1.1.1" or "1.1.1"
-    match = re.search(r"(\d+)\.(\d+)\.(\d+)", output)
-    if match is None:
-        logger.warning(f"Could not parse breakinator version from: {output!r}")
-        return
-
-    version: tuple[int, ...] = tuple(int(x) for x in match.groups())
-    if version < _MIN_BREAKINATOR_VERSION:
-        min_ver = ".".join(str(v) for v in _MIN_BREAKINATOR_VERSION)
-        cur_ver = ".".join(str(v) for v in version)
-        raise RuntimeError(
-            f"breakinator {cur_ver} is too old. DirectClean requires "
-            f">= {min_ver} (the Rust version) which accepts SAM input. "
-            f"The old Python version expects PAF and will fail. "
-            f"Please update: conda install -c bioconda 'breakinator>={min_ver}'"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +70,7 @@ class BreakReport:
             if self.input_reads > 0
             else "N/A"
         )
+
         return (
             "=== Breakinator Report ===\n"
             f"  Breakpoints total       : {self.total_breakpoints:,}\n"
@@ -145,6 +110,7 @@ def _run_minimap2_for_breakinator(
         threads:      Number of threads.
         junc_bed:     Optional junction BED for guided alignment.
     """
+
     minimap2_bin = check_binary("minimap2")
 
     cmd = [
@@ -164,7 +130,9 @@ def _run_minimap2_for_breakinator(
 
     cmd.extend([str(reference), str(input_fastq)])
 
-    logger.info(f"Running minimap2 for Breakinator: {' '.join(cmd[:6])}...")
+    logger.info(
+        f"Running minimap2 for Breakinator: {' '.join(cmd[:6])}..."
+    )
 
     with open(output_sam, "w") as sam_fh:
         proc = subprocess.run(
@@ -175,7 +143,9 @@ def _run_minimap2_for_breakinator(
         )
 
     if proc.returncode != 0:
-        raise RuntimeError(f"minimap2 failed (exit {proc.returncode}):\n{proc.stderr}")
+        raise RuntimeError(
+            f"minimap2 failed (exit {proc.returncode}):\n{proc.stderr}"
+        )
 
     logger.info(f"SAM written: {output_sam}")
 
@@ -192,8 +162,13 @@ def _run_breakinator(
         output_artifacts:  Output tabular artifacts file.
         threads:           Number of threads.
     """
+
     breakinator_bin = check_binary("breakinator")
-    _check_breakinator_version(breakinator_bin)
+
+    # The complete DirectClean pipeline checks this before Stage 1 begins.
+    # Retain this defensive check for users who invoke BreakinatorRunner
+    # directly rather than through the complete pipeline.
+    check_breakinator_compatibility(breakinator_bin)
 
     cmd = [
         breakinator_bin,
@@ -223,7 +198,9 @@ def _run_breakinator(
     logger.info(f"Artifacts written: {output_artifacts}")
 
 
-def _parse_foldback_ids(artifacts_file: Path) -> tuple[set[str], dict]:
+def _parse_foldback_ids(
+    artifacts_file: Path,
+) -> tuple[set[str], dict]:
     """Parse Breakinator tabular output and extract Foldback read IDs.
 
     Only Foldback reads are removed — Chimeric reads are left for
@@ -236,14 +213,22 @@ def _parse_foldback_ids(artifacts_file: Path) -> tuple[set[str], dict]:
         (foldback_ids, breakpoint_stats) where breakpoint_stats has
         counts for each classification.
     """
+
     foldback_ids: set[str] = set()
-    stats = {"total": 0, "Foldback": 0, "Chimeric": 0, "Pass": 0}
+    stats = {
+        "total": 0,
+        "Foldback": 0,
+        "Chimeric": 0,
+        "Pass": 0,
+    }
 
     with open(artifacts_file) as fh:
         for line in fh:
             if line.startswith("#"):
                 continue
+
             fields = line.strip().split("\t")
+
             if len(fields) < 8:
                 continue
 
@@ -251,6 +236,7 @@ def _parse_foldback_ids(artifacts_file: Path) -> tuple[set[str], dict]:
             classification = fields[7]
 
             stats["total"] += 1
+
             if classification in stats:
                 stats[classification] += 1
 
@@ -261,6 +247,7 @@ def _parse_foldback_ids(artifacts_file: Path) -> tuple[set[str], dict]:
         f"Breakinator: {stats['total']:,} breakpoints, "
         f"{len(foldback_ids):,} unique foldback reads"
     )
+
     return foldback_ids, stats
 
 
@@ -281,6 +268,7 @@ class BreakinatorRunner:
             reference=Path("genome.fa"),
             threads=8,
         )
+
         report = runner.run(
             input_fastq=Path("raw.fastq"),
             output_fastq=Path("no_foldback.fastq"),
@@ -327,6 +315,7 @@ class BreakinatorRunner:
         Returns:
             BreakReport with statistics.
         """
+
         work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -339,6 +328,7 @@ class BreakinatorRunner:
 
         # Step 1: minimap2 → SAM
         logger.info("Step 1/3: Aligning reads for Breakinator...")
+
         _run_minimap2_for_breakinator(
             reference=self.reference,
             input_fastq=input_fastq,
@@ -349,6 +339,7 @@ class BreakinatorRunner:
 
         # Step 2: Breakinator → artifacts.txt
         logger.info("Step 2/3: Running Breakinator...")
+
         _run_breakinator(
             input_sam=sam_path,
             output_artifacts=artifacts_path,
@@ -357,6 +348,7 @@ class BreakinatorRunner:
 
         # Step 3: Parse foldback IDs and filter FASTQ
         logger.info("Step 3/3: Filtering foldback reads...")
+
         foldback_ids, bp_stats = _parse_foldback_ids(artifacts_path)
 
         report.total_breakpoints = bp_stats["total"]
@@ -377,10 +369,11 @@ class BreakinatorRunner:
         report.kept_reads = kept
         report.removed_reads = removed
 
-        # Clean up large SAM file (user still has artifacts.txt for reference)
+        # Clean up large SAM file. The tabular Breakinator report remains.
         if sam_path.exists():
             sam_path.unlink()
             logger.debug(f"Cleaned up intermediate SAM: {sam_path}")
 
         logger.info(f"Breakinator stage complete.\n{report}")
+
         return report

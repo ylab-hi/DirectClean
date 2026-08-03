@@ -1,12 +1,15 @@
 name: directclean
+
 channels:
   - bioconda
   - genomedk
   - conda-forge
   - defaults
+
 dependencies:
   - python>=3.10
   - minimap2
   - samtools
-  - breakinator>=1.1.1
+  - breakinator=1.1.1=h067a5f5_1
   - restrander
+
