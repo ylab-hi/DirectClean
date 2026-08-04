@@ -362,11 +362,13 @@ class DirectCleanPipeline:
             )
             return self._unknowns_rescued_fastq, unknowns_report
 
+        worker_processes = max(1, self.config.threads - 1)
         rescuer = UnknownsRescuer(
             unknowns_fastq=self._unknowns_fastq,
             output_fastq=self._unknowns_rescued_fastq,
             config=self.config.adapter_config,
             min_confidence=self.config.min_confidence,
+            threads=worker_processes,
         )
         unknowns_report = rescuer.run()
         return self._unknowns_rescued_fastq, unknowns_report
@@ -427,13 +429,14 @@ class DirectCleanPipeline:
         logger.info("Stage 3/5: Rescuer — internal adapter detection")
         logger.info("=" * 55)
 
+        worker_processes = max(1, self.config.threads - 1)
         chopper = ReadChopper(
             input_fastq=fastq,
             output_fastq=self._rescued_fastq,
             config=self.config.adapter_config,
             min_confidence=self.config.min_confidence,
             report_path=self._reports_dir / f"{self.prefix}.rescue_report.tsv",
-            threads=1,
+            threads=worker_processes,
         )
         report = chopper.run()
         return self._rescued_fastq, report

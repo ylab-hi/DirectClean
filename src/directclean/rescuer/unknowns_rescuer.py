@@ -1,32 +1,7 @@
-"""
-Unknowns rescuer — rescue reads from Restrander's unknowns output.
+"""Unknowns rescuer — rescue reads from Restrander's unknowns output.
 
-Restrander discards reads it cannot orient (unknowns, RTP-RTP and
-TSO-TSO artefacts) into a separate FASTQ.  Some of these reads are
-actually two cDNA molecules ligated together through internal adapters.
-
-This module:
-    1. Scans unknowns FASTQ for internal adapter junctions (reusing
-       Stage 3's AdapterFinder).
-    2. Chops reads at detected junctions to produce sub-reads.
-    3. Determines strand orientation of each sub-read using polyA/T
-       tails and TSO/RTP primer signals.
-    4. Reverse-complements reverse-strand sub-reads so all output
-       reads are in 5'→3' mRNA orientation.
-    5. Writes oriented sub-reads to output FASTQ for merging into
-       the main pipeline.
-
-Only sub-reads that can be confidently oriented are kept; reads that
-remain ambiguous are discarded.
-
-Typical usage (within the pipeline)::
-
-    rescuer = UnknownsRescuer(
-        unknowns_fastq=restrander_unknowns,
-        output_fastq=oriented_output,
-        config=adapter_config,
-    )
-    report = rescuer.run()
+The parallel implementation is bounded and writes results in original chunk
+order, preserving the serial algorithm's FASTQ content and statistics.
 """
 
 from __future__ import annotations
@@ -42,41 +17,33 @@ from Bio.SeqRecord import SeqRecord
 
 from directclean.rescuer.adaptor_seq import (
     AdapterConfig,
-    TSO_SEQUENCE,
     RTP_SEQUENCE,
+    TSO_SEQUENCE,
 )
-from directclean.rescuer.adapter_finder import AdapterFinder, InternalJunction
+from directclean.rescuer.adapter_finder import AdapterFinder
 from directclean.utils.io import read_fastq
+from directclean.utils.parallel import (
+    SerializedFastqRecord,
+    bounded_ordered_process_map,
+    deserialize_fastq_record,
+    iter_serialized_fastq_chunks,
+    temporary_output_path,
+)
 from directclean.utils.sequence_operator import reverse_complement
 
 logger = logging.getLogger(__name__)
 
-# Primer sequences for orientation detection
 _TSO = TSO_SEQUENCE.upper()
 _RTP = RTP_SEQUENCE.upper()
 _TSO_RC = reverse_complement(_TSO)
 
-
-# ---------------------------------------------------------------------------
-# Report
-# ---------------------------------------------------------------------------
+_DEFAULT_CHUNK_SIZE = 1000
+_DEFAULT_CHUNK_BASES = 5_000_000
 
 
 @dataclass
 class UnknownsRescueReport:
-    """Summary statistics for the unknowns rescue operation.
-
-    Attributes:
-        total_unknowns:     Total reads in the unknowns FASTQ.
-        reads_with_adapter: Reads with ≥1 internal adapter junction.
-        reads_without:      Reads with no internal adapter (discarded).
-        segments_produced:  Total sub-reads after chopping.
-        segments_discarded_short: Sub-reads too short (<min_segment_length).
-        oriented_forward:   Sub-reads oriented as forward (no flip).
-        oriented_reverse:   Sub-reads oriented as reverse (flipped).
-        oriented_unknown:   Sub-reads that could not be oriented (discarded).
-        output_reads:       Final reads written to output.
-    """
+    """Summary statistics for the unknowns rescue operation."""
 
     total_unknowns: int = 0
     reads_with_adapter: int = 0
@@ -110,10 +77,17 @@ class UnknownsRescueReport:
             "==========================================="
         )
 
-
-# ---------------------------------------------------------------------------
-# Orientation logic
-# ---------------------------------------------------------------------------
+    def merge(self, other: "UnknownsRescueReport") -> None:
+        """Merge integer counters from one processed chunk."""
+        self.total_unknowns += other.total_unknowns
+        self.reads_with_adapter += other.reads_with_adapter
+        self.reads_without += other.reads_without
+        self.segments_produced += other.segments_produced
+        self.segments_discarded_short += other.segments_discarded_short
+        self.oriented_forward += other.oriented_forward
+        self.oriented_reverse += other.oriented_reverse
+        self.oriented_unknown += other.oriented_unknown
+        self.output_reads += other.output_reads
 
 
 def _fuzzy_match(seq: str, query: str, max_ed: int = 3) -> bool:
@@ -123,12 +97,12 @@ def _fuzzy_match(seq: str, query: str, max_ed: int = 3) -> bool:
 
 
 def _has_polya(seq: str, min_run: int = 10) -> bool:
-    """Check for polyA run in the last 200bp of sequence."""
+    """Check for a polyA run in the final 200 bases."""
     tail = seq[-200:].upper()
     max_run = 0
     current = 0
-    for ch in tail:
-        if ch == "A":
+    for base in tail:
+        if base == "A":
             current += 1
             if current > max_run:
                 max_run = current
@@ -138,12 +112,12 @@ def _has_polya(seq: str, min_run: int = 10) -> bool:
 
 
 def _has_polyt(seq: str, min_run: int = 10) -> bool:
-    """Check for polyT run in the first 200bp of sequence."""
+    """Check for a polyT run in the first 200 bases."""
     head = seq[:200].upper()
     max_run = 0
     current = 0
-    for ch in head:
-        if ch == "T":
+    for base in head:
+        if base == "T":
             current += 1
             if current > max_run:
                 max_run = current
@@ -153,59 +127,117 @@ def _has_polyt(seq: str, min_run: int = 10) -> bool:
 
 
 def orient_subread(seq: str) -> str | None:
-    """Determine strand orientation and return correctly oriented sequence.
-
-    Detection logic (in priority order):
-        1. TSO at 5' end OR polyA at 3' end → forward → return as-is.
-        2. RTP at 5' end OR polyT at 5' end → reverse → return RC.
-        3. TSO_rc at 3' end → reverse → return RC.
-        4. None of the above → unknown → return None.
-
-    Args:
-        seq: Raw sub-read sequence.
-
-    Returns:
-        Oriented sequence (5'→3'), or None if orientation unknown.
-    """
+    """Return the existing serial orientation decision for one segment."""
     head = seq[:200]
     tail = seq[-200:]
 
-    # Forward signals: TSO at 5' or polyA at 3'
     if _fuzzy_match(head, _TSO) or _has_polya(seq):
         return seq
-
-    # Reverse signals: RTP or polyT at 5'
     if _fuzzy_match(head, _RTP) or _has_polyt(seq):
         return reverse_complement(seq)
-
-    # Reverse signal: TSO_rc at 3'
     if _fuzzy_match(tail, _TSO_RC):
         return reverse_complement(seq)
-
     return None
 
 
-# ---------------------------------------------------------------------------
-# Main rescuer class
-# ---------------------------------------------------------------------------
+_UNKNOWNS_FINDER: AdapterFinder | None = None
+_UNKNOWNS_MIN_CONFIDENCE = 2
+_UNKNOWNS_MIN_SEGMENT_LENGTH = 50
+
+
+def _init_unknowns_worker(
+    config_values: dict,
+    min_confidence: int,
+    min_segment_length: int,
+) -> None:
+    """Initialize one long-lived Unknowns Rescue worker process."""
+    global _UNKNOWNS_FINDER
+    global _UNKNOWNS_MIN_CONFIDENCE
+    global _UNKNOWNS_MIN_SEGMENT_LENGTH
+
+    config = AdapterConfig(**config_values)
+    _UNKNOWNS_FINDER = AdapterFinder(config)
+    _UNKNOWNS_MIN_CONFIDENCE = min_confidence
+    _UNKNOWNS_MIN_SEGMENT_LENGTH = min_segment_length
+
+
+def _process_unknowns_chunk(
+    chunk: list[SerializedFastqRecord],
+) -> tuple[list[SerializedFastqRecord], UnknownsRescueReport]:
+    """Process one Unknowns Rescue chunk with unchanged read logic."""
+    if _UNKNOWNS_FINDER is None:
+        raise RuntimeError("Unknowns Rescue worker was not initialized")
+
+    output_records: list[SerializedFastqRecord] = []
+    report = UnknownsRescueReport()
+
+    for read_id, _name, _description, sequence, qualities in chunk:
+        report.total_unknowns += 1
+        finder_result = _UNKNOWNS_FINDER.find(
+            read_id=read_id,
+            sequence=sequence,
+        )
+        qualified = [
+            junction
+            for junction in finder_result.junctions
+            if junction.confidence >= _UNKNOWNS_MIN_CONFIDENCE
+        ]
+
+        if not qualified:
+            report.reads_without += 1
+            continue
+
+        report.reads_with_adapter += 1
+        boundaries = [0]
+        for junction in qualified:
+            position = junction.chop_position
+            if 0 < position < len(sequence):
+                boundaries.append(position)
+        boundaries.append(len(sequence))
+
+        for index in range(len(boundaries) - 1):
+            start = boundaries[index]
+            end = boundaries[index + 1]
+
+            if end - start < _UNKNOWNS_MIN_SEGMENT_LENGTH:
+                report.segments_discarded_short += 1
+                continue
+
+            report.segments_produced += 1
+            segment_sequence = sequence[start:end]
+            oriented_sequence = orient_subread(segment_sequence)
+
+            if oriented_sequence is None:
+                report.oriented_unknown += 1
+                continue
+
+            reverse_oriented = oriented_sequence != segment_sequence
+            if reverse_oriented:
+                report.oriented_reverse += 1
+            else:
+                report.oriented_forward += 1
+
+            segment_id = f"{read_id}_rescued{index + 1}"
+            segment_qualities = qualities[start:end] if qualities else b""
+            if reverse_oriented:
+                segment_qualities = segment_qualities[::-1]
+
+            output_records.append(
+                (
+                    segment_id,
+                    segment_id,
+                    f"unknowns_rescued_from={read_id} start={start} end={end}",
+                    oriented_sequence,
+                    segment_qualities,
+                )
+            )
+            report.output_reads += 1
+
+    return output_records, report
 
 
 class UnknownsRescuer:
-    """Rescue oriented sub-reads from Restrander's unknowns FASTQ.
-
-    Workflow:
-        1. Scan each read for internal adapter junctions.
-        2. Chop reads with detected junctions.
-        3. Orient each sub-read using primer/tail signals.
-        4. Write successfully oriented sub-reads to output.
-
-    Args:
-        unknowns_fastq: Path to Restrander's unknowns FASTQ.
-        output_fastq:   Path for oriented rescued reads.
-        config:         AdapterConfig for internal adapter detection.
-        min_confidence: Minimum confidence to chop (default 2).
-        min_segment_length: Minimum sub-read length to keep (default 50).
-    """
+    """Rescue oriented sub-reads from Restrander's unknowns FASTQ."""
 
     def __init__(
         self,
@@ -214,41 +246,40 @@ class UnknownsRescuer:
         config: AdapterConfig | None = None,
         min_confidence: int = 2,
         min_segment_length: int = 50,
+        threads: int = 1,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        chunk_bases: int = _DEFAULT_CHUNK_BASES,
     ) -> None:
         self.unknowns_fastq = Path(unknowns_fastq)
         self.output_fastq = Path(output_fastq)
         self.config = config or AdapterConfig()
         self.min_confidence = min_confidence
         self.min_segment_length = min_segment_length
+        self.threads = max(1, threads)
+        self.chunk_size = max(1, chunk_size)
+        self.chunk_bases = max(1, chunk_bases)
 
         self.output_fastq.parent.mkdir(parents=True, exist_ok=True)
 
-    def run(self) -> UnknownsRescueReport:
-        """Execute the unknowns rescue pipeline.
-
-        Returns:
-            UnknownsRescueReport with statistics.
-        """
-        logger.info("Unknowns Rescue: scanning for internal adapters ...")
-
+    def _run_single_thread(self) -> UnknownsRescueReport:
+        """Execute the unchanged serial algorithm with streaming output."""
         finder = AdapterFinder(self.config)
         report = UnknownsRescueReport()
 
         with open(self.output_fastq, "w") as output_handle:
             for record in read_fastq(self.unknowns_fastq):
                 report.total_unknowns += 1
-                seq = str(record.seq)
-                quals = record.letter_annotations.get("phred_quality", [])
+                sequence = str(record.seq)
+                qualities = record.letter_annotations.get("phred_quality", [])
 
-                # Step 1: detect internal adapters
                 finder_result = finder.find(
                     read_id=record.id,
-                    sequence=seq,
+                    sequence=sequence,
                 )
                 qualified = [
-                    j
-                    for j in finder_result.junctions
-                    if j.confidence >= self.min_confidence
+                    junction
+                    for junction in finder_result.junctions
+                    if junction.confidence >= self.min_confidence
                 ]
 
                 if not qualified:
@@ -256,64 +287,123 @@ class UnknownsRescuer:
                     continue
 
                 report.reads_with_adapter += 1
-
-                # Step 2: chop at junction positions
                 boundaries = [0]
-                for junc in qualified:
-                    pos = junc.chop_position
-                    if 0 < pos < len(seq):
-                        boundaries.append(pos)
-                boundaries.append(len(seq))
+                for junction in qualified:
+                    position = junction.chop_position
+                    if 0 < position < len(sequence):
+                        boundaries.append(position)
+                boundaries.append(len(sequence))
 
-                for i in range(len(boundaries) - 1):
-                    start = boundaries[i]
-                    end = boundaries[i + 1]
-                    seg_len = end - start
+                for index in range(len(boundaries) - 1):
+                    start = boundaries[index]
+                    end = boundaries[index + 1]
 
-                    if seg_len < self.min_segment_length:
+                    if end - start < self.min_segment_length:
                         report.segments_discarded_short += 1
                         continue
 
                     report.segments_produced += 1
-                    seg_seq = seq[start:end]
+                    segment_sequence = sequence[start:end]
+                    oriented_sequence = orient_subread(segment_sequence)
 
-                    # Step 3: orient the sub-read
-                    oriented_seq = orient_subread(seg_seq)
-
-                    if oriented_seq is None:
+                    if oriented_sequence is None:
                         report.oriented_unknown += 1
                         continue
 
-                    if oriented_seq == seg_seq:
-                        report.oriented_forward += 1
-                    else:
+                    reverse_oriented = oriented_sequence != segment_sequence
+                    if reverse_oriented:
                         report.oriented_reverse += 1
+                    else:
+                        report.oriented_forward += 1
 
-                    # Build output record
-                    seg_id = f"{record.id}_rescued{i + 1}"
-                    seg_record = SeqRecord(
-                        seq=Seq(oriented_seq),
-                        id=seg_id,
-                        name=seg_id,
+                    segment_id = f"{record.id}_rescued{index + 1}"
+                    segment = SeqRecord(
+                        seq=Seq(oriented_sequence),
+                        id=segment_id,
+                        name=segment_id,
                         description=(
-                            f"unknowns_rescued_from={record.id} start={start} end={end}"
+                            f"unknowns_rescued_from={record.id} "
+                            f"start={start} end={end}"
                         ),
                     )
+                    if qualities:
+                        segment_qualities = qualities[start:end]
+                        if reverse_oriented:
+                            segment_qualities = segment_qualities[::-1]
+                        segment.letter_annotations["phred_quality"] = (
+                            segment_qualities
+                        )
 
-                    # Preserve quality scores (reverse if RC'd)
-                    if quals:
-                        seg_quals = quals[start:end]
-                        if oriented_seq != seg_seq:
-                            # Quality scores must be reversed for RC reads
-                            seg_quals = seg_quals[::-1]
-                        seg_record.letter_annotations["phred_quality"] = seg_quals
-
-                    SeqIO.write(seg_record, output_handle, "fastq")
+                    SeqIO.write(segment, output_handle, "fastq")
                     report.output_reads += 1
 
+        return report
+
+    def _run_parallel(self) -> UnknownsRescueReport:
+        """Run bounded, ordered Unknowns Rescue multiprocessing."""
+        workers = self.threads
+        max_in_flight = max(workers, workers * 2)
         logger.info(
-            f"Unknowns Rescue complete: {report.total_unknowns:,} scanned, "
-            f"{report.output_reads:,} oriented reads rescued"
+            "Unknowns Rescue: bounded parallel mode with %d workers, "
+            "max_in_flight=%d, chunk_reads=%d, chunk_bases=%d",
+            workers,
+            max_in_flight,
+            self.chunk_size,
+            self.chunk_bases,
         )
-        logger.info(f"\n{report}")
+
+        output_tmp = temporary_output_path(self.output_fastq)
+        output_tmp.unlink(missing_ok=True)
+        merged_report = UnknownsRescueReport()
+        chunks = iter_serialized_fastq_chunks(
+            self.unknowns_fastq,
+            max_reads=self.chunk_size,
+            max_bases=self.chunk_bases,
+        )
+        config_values = dict(vars(self.config))
+
+        try:
+            with open(output_tmp, "w") as output_handle:
+                for _, result in bounded_ordered_process_map(
+                    _process_unknowns_chunk,
+                    chunks,
+                    max_workers=workers,
+                    max_in_flight=max_in_flight,
+                    initializer=_init_unknowns_worker,
+                    initargs=(
+                        config_values,
+                        self.min_confidence,
+                        self.min_segment_length,
+                    ),
+                ):
+                    output_records, partial_report = result
+                    for serialized in output_records:
+                        SeqIO.write(
+                            deserialize_fastq_record(serialized),
+                            output_handle,
+                            "fastq",
+                        )
+                    merged_report.merge(partial_report)
+
+            output_tmp.replace(self.output_fastq)
+        except BaseException:
+            output_tmp.unlink(missing_ok=True)
+            raise
+
+        return merged_report
+
+    def run(self) -> UnknownsRescueReport:
+        """Execute the unknowns rescue pipeline."""
+        logger.info("Unknowns Rescue: scanning for internal adapters ...")
+        report = (
+            self._run_single_thread()
+            if self.threads <= 1
+            else self._run_parallel()
+        )
+        logger.info(
+            "Unknowns Rescue complete: %s scanned, %s oriented reads rescued",
+            f"{report.total_unknowns:,}",
+            f"{report.output_reads:,}",
+        )
+        logger.info("\n%s", report)
         return report
