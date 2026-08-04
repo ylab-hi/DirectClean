@@ -42,7 +42,10 @@ from pathlib import Path
 
 from directclean.external.breakinator import BreakinatorRunner, BreakReport
 from directclean.external.restrander import RestranderRunner, RestranderReport
-from directclean.external.minimap2 import Minimap2Aligner
+from directclean.external.minimap2 import (
+    Minimap2Aligner,
+    get_or_build_minimap2_index,
+)
 from directclean.external.dependencies import check_all_dependencies
 from directclean.rescuer import ReadChopper, AdapterConfig, RescueReport
 from directclean.rescuer.unknowns_rescuer import UnknownsRescuer, UnknownsRescueReport
@@ -195,6 +198,7 @@ class DirectCleanPipeline:
         self.output_dir = Path(output_dir)
         self.prefix = prefix
         self.config = config or PipelineConfig()
+        self._minimap2_index: Path | None = None
 
         # Validate inputs
         if not self.input_fastq.exists():
@@ -260,6 +264,26 @@ class DirectCleanPipeline:
         """Sub-reads rescued by homopolymer chopping (Stage 5)."""
         return self.output_dir / f"{self.prefix}.rescued.fastq"
 
+    # ---- Shared persistent minimap2 index ----
+
+    def _prepare_minimap2_index(self) -> Path:
+        """Build once when needed and reuse across stages and samples."""
+        index_path = get_or_build_minimap2_index(
+            reference=self.reference,
+            threads=self.config.threads,
+        )
+        self._minimap2_index = index_path
+        return index_path
+
+    @property
+    def _mapping_reference(self) -> Path:
+        """Reference index used by both minimap2 alignment stages."""
+        if self._minimap2_index is None:
+            raise RuntimeError(
+                "Minimap2 index has not been prepared before alignment."
+            )
+        return self._minimap2_index
+
     # ---- Stage 1: Breakinator ----
 
     def _run_breakinator(self) -> tuple[Path, BreakReport]:
@@ -273,7 +297,7 @@ class DirectCleanPipeline:
         logger.info("=" * 55)
 
         runner = BreakinatorRunner(
-            reference=self.reference,
+            reference=self._mapping_reference,
             threads=self.config.threads,
             junc_bed=self.config.junc_bed,
         )
@@ -430,7 +454,7 @@ class DirectCleanPipeline:
         logger.info("=" * 55)
 
         aligner = Minimap2Aligner(
-            reference=self.reference,
+            reference=self._mapping_reference,
             threads=self.config.threads,
             sample_id=self.prefix,
         )
@@ -495,6 +519,10 @@ class DirectCleanPipeline:
         logger.info(f"  Reference: {self.reference}")
         logger.info(f"  Output:    {self.output_dir}")
         logger.info(f"  Threads:   {self.config.threads}")
+
+        # Build once if absent; reuse for both alignment stages and future runs.
+        index_path = self._prepare_minimap2_index()
+        logger.info(f"  MM2 index: {index_path}")
 
         # Stage 1: Breakinator
         stage1_fastq, break_report = self._run_breakinator()

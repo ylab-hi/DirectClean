@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import edlib
+from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
@@ -45,7 +46,7 @@ from directclean.rescuer.adaptor_seq import (
     RTP_SEQUENCE,
 )
 from directclean.rescuer.adapter_finder import AdapterFinder, InternalJunction
-from directclean.utils.io import read_fastq, write_fastq
+from directclean.utils.io import read_fastq
 from directclean.utils.sequence_operator import reverse_complement
 
 logger = logging.getLogger(__name__)
@@ -232,86 +233,83 @@ class UnknownsRescuer:
 
         finder = AdapterFinder(self.config)
         report = UnknownsRescueReport()
-        output_records: list[SeqRecord] = []
 
-        for record in read_fastq(self.unknowns_fastq):
-            report.total_unknowns += 1
-            seq = str(record.seq)
-            quals = record.letter_annotations.get("phred_quality", [])
+        with open(self.output_fastq, "w") as output_handle:
+            for record in read_fastq(self.unknowns_fastq):
+                report.total_unknowns += 1
+                seq = str(record.seq)
+                quals = record.letter_annotations.get("phred_quality", [])
 
-            # Step 1: detect internal adapters
-            finder_result = finder.find(
-                read_id=record.id,
-                sequence=seq,
-            )
-            qualified = [
-                j
-                for j in finder_result.junctions
-                if j.confidence >= self.min_confidence
-            ]
-
-            if not qualified:
-                report.reads_without += 1
-                continue
-
-            report.reads_with_adapter += 1
-
-            # Step 2: chop at junction positions
-            boundaries = [0]
-            for junc in qualified:
-                pos = junc.chop_position
-                if 0 < pos < len(seq):
-                    boundaries.append(pos)
-            boundaries.append(len(seq))
-
-            for i in range(len(boundaries) - 1):
-                start = boundaries[i]
-                end = boundaries[i + 1]
-                seg_len = end - start
-
-                if seg_len < self.min_segment_length:
-                    report.segments_discarded_short += 1
-                    continue
-
-                report.segments_produced += 1
-                seg_seq = seq[start:end]
-
-                # Step 3: orient the sub-read
-                oriented_seq = orient_subread(seg_seq)
-
-                if oriented_seq is None:
-                    report.oriented_unknown += 1
-                    continue
-
-                if oriented_seq == seg_seq:
-                    report.oriented_forward += 1
-                else:
-                    report.oriented_reverse += 1
-
-                # Build output record
-                seg_id = f"{record.id}_rescued{i + 1}"
-                seg_record = SeqRecord(
-                    seq=Seq(oriented_seq),
-                    id=seg_id,
-                    name=seg_id,
-                    description=(
-                        f"unknowns_rescued_from={record.id} start={start} end={end}"
-                    ),
+                # Step 1: detect internal adapters
+                finder_result = finder.find(
+                    read_id=record.id,
+                    sequence=seq,
                 )
+                qualified = [
+                    j
+                    for j in finder_result.junctions
+                    if j.confidence >= self.min_confidence
+                ]
 
-                # Preserve quality scores (reverse if RC'd)
-                if quals:
-                    seg_quals = quals[start:end]
-                    if oriented_seq != seg_seq:
-                        # Quality scores must be reversed for RC reads
-                        seg_quals = seg_quals[::-1]
-                    seg_record.letter_annotations["phred_quality"] = seg_quals
+                if not qualified:
+                    report.reads_without += 1
+                    continue
 
-                output_records.append(seg_record)
-                report.output_reads += 1
+                report.reads_with_adapter += 1
 
-        # Write output
-        write_fastq(output_records, self.output_fastq)
+                # Step 2: chop at junction positions
+                boundaries = [0]
+                for junc in qualified:
+                    pos = junc.chop_position
+                    if 0 < pos < len(seq):
+                        boundaries.append(pos)
+                boundaries.append(len(seq))
+
+                for i in range(len(boundaries) - 1):
+                    start = boundaries[i]
+                    end = boundaries[i + 1]
+                    seg_len = end - start
+
+                    if seg_len < self.min_segment_length:
+                        report.segments_discarded_short += 1
+                        continue
+
+                    report.segments_produced += 1
+                    seg_seq = seq[start:end]
+
+                    # Step 3: orient the sub-read
+                    oriented_seq = orient_subread(seg_seq)
+
+                    if oriented_seq is None:
+                        report.oriented_unknown += 1
+                        continue
+
+                    if oriented_seq == seg_seq:
+                        report.oriented_forward += 1
+                    else:
+                        report.oriented_reverse += 1
+
+                    # Build output record
+                    seg_id = f"{record.id}_rescued{i + 1}"
+                    seg_record = SeqRecord(
+                        seq=Seq(oriented_seq),
+                        id=seg_id,
+                        name=seg_id,
+                        description=(
+                            f"unknowns_rescued_from={record.id} start={start} end={end}"
+                        ),
+                    )
+
+                    # Preserve quality scores (reverse if RC'd)
+                    if quals:
+                        seg_quals = quals[start:end]
+                        if oriented_seq != seg_seq:
+                            # Quality scores must be reversed for RC reads
+                            seg_quals = seg_quals[::-1]
+                        seg_record.letter_annotations["phred_quality"] = seg_quals
+
+                    SeqIO.write(seg_record, output_handle, "fastq")
+                    report.output_reads += 1
 
         logger.info(
             f"Unknowns Rescue complete: {report.total_unknowns:,} scanned, "

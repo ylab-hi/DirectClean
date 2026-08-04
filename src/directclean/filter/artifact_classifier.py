@@ -97,9 +97,10 @@ class FilterReport:
     output_reads: int = 0
     segments_rescued: int = 0
     segments_discarded: int = 0
+    # Legacy compatibility fields.  The streaming implementation writes
+    # each TSV row immediately and intentionally leaves these collections
+    # empty instead of retaining all per-read verdict objects.
     verdicts: list[ReadVerdict] = field(default_factory=list, repr=False)
-
-    # Track which reads actually get chopped (for TSV report)
     _chopped_read_ids: set[str] = field(default_factory=set, repr=False)
 
     # Keep old attribute names accessible for backward compatibility
@@ -239,65 +240,74 @@ class ArtifactClassifier:
     # ---- Phase 1: scan BAM ----
 
     def scan_bam(self) -> tuple[dict[str, list[int]], FilterReport]:
-        """Scan BAM for chimeric reads and classify junctions.
+        """Scan BAM, classify junctions, and stream the per-read TSV.
 
-        After homopolymer detection, each artifact junction is checked
-        against a standard-chromosome whitelist filter: both segments
-        must map to chr1-22, chrX, chrY, or chrM.  Junctions involving
-        alt loci or unplaced scaffolds are skipped to avoid false
-        positives from unreliable alignments on these contigs.
+        The report row for each chimeric read is complete as soon as the
+        genomic-coordinate filters have been applied.  It is therefore
+        written immediately instead of retaining every ReadVerdict object
+        until the end of the scan.
 
         Returns:
-            (chop_map, report) — dict mapping artifact read IDs to
-            sorted list of chop positions (read coordinates), and
-            a partially filled FilterReport.
+            (chop_map, report) — artifact read IDs mapped to sorted chop
+            positions, plus the partially filled summary report.
         """
         logger.info("Phase 1: scanning BAM for homopolymer artifacts ...")
+        logger.info(f"Writing report to {self.report_path}")
 
-        # Map: read_id -> sorted list of artifact junction positions
         chop_map: dict[str, list[int]] = {}
         report = FilterReport()
 
-        for chimeric in iter_chimeric_reads(
-            self.bam_path,
-            window_size=self.context_window,
-            min_mapq=self.min_mapq,
-        ):
-            report.total_chimeric_reads += 1
-            verdict = self.detector.judge_read(chimeric)
-            report.verdicts.append(verdict)
-            report.total_junctions += verdict.n_junctions
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.report_path, "w") as report_handle:
+            report_handle.write(
+                "read_id\tverdict\tn_junctions\tn_artifact_junctions"
+                "\tjunction_details\n"
+            )
 
-            if verdict.is_artifact:
-                # Apply genomic-coordinate filters to each artifact junction
-                artifact_positions = []
+            for chimeric in iter_chimeric_reads(
+                self.bam_path,
+                window_size=self.context_window,
+                min_mapq=self.min_mapq,
+            ):
+                report.total_chimeric_reads += 1
+                verdict = self.detector.judge_read(chimeric)
+                report.total_junctions += verdict.n_junctions
+
+                artifact_positions: list[int] = []
                 skipped = 0
 
-                for jv in verdict.junction_verdicts:
-                    if not jv.is_artifact:
-                        continue
+                if verdict.is_artifact:
+                    for jv in verdict.junction_verdicts:
+                        if not jv.is_artifact:
+                            continue
 
-                    left = jv.junction.left_segment
-                    right = jv.junction.right_segment
+                        left = jv.junction.left_segment
+                        right = jv.junction.right_segment
 
-                    if _is_valid_artifact_junction(
-                        left.chrom,
-                        left.ref_start,
-                        right.chrom,
-                        right.ref_start,
-                    ):
-                        artifact_positions.append(jv.junction.read_position)
-                    else:
-                        skipped += 1
+                        if _is_valid_artifact_junction(
+                            left.chrom,
+                            left.ref_start,
+                            right.chrom,
+                            right.ref_start,
+                        ):
+                            artifact_positions.append(
+                                jv.junction.read_position
+                            )
+                        else:
+                            skipped += 1
 
                 report.skipped_junctions += skipped
                 report.artifact_junctions += len(artifact_positions)
 
-                if artifact_positions:
+                chopped = bool(artifact_positions)
+                if chopped:
                     report.artifact_reads += 1
                     artifact_positions.sort()
                     chop_map[verdict.read_id] = artifact_positions
-                    report._chopped_read_ids.add(verdict.read_id)
+
+                report_handle.write(
+                    self._format_report_line(verdict, chopped=chopped)
+                )
 
         report.clean_chimeric_reads = (
             report.total_chimeric_reads - report.artifact_reads
@@ -309,6 +319,64 @@ class ArtifactClassifier:
             f"({report.skipped_junctions:,} junctions skipped by filters)"
         )
         return chop_map, report
+
+    @staticmethod
+    def _format_report_line(rv: ReadVerdict, chopped: bool) -> str:
+        """Format one homopolymer report row exactly as before."""
+        details_parts = []
+        n_passed = 0
+
+        for jv in rv.junction_verdicts:
+            left = jv.junction.left_segment
+            right = jv.junction.right_segment
+
+            if jv.is_artifact:
+                passed = _is_valid_artifact_junction(
+                    left.chrom,
+                    left.ref_start,
+                    right.chrom,
+                    right.ref_start,
+                )
+                if passed:
+                    n_passed += 1
+                filter_status = "PASS" if passed else "SKIPPED"
+            else:
+                filter_status = "NA"
+
+            detail = (
+                f"{left.chrom}:{left.ref_start}({left.strand})->"
+                f"{right.chrom}:{right.ref_start}({right.strand})"
+                f"|pos={jv.junction.read_position}"
+                f"|source={jv.hit_source}"
+                f"|up_hit={jv.upstream_hit.is_hit}"
+                f"(d={jv.upstream_hit.density:.2f},"
+                f"run={jv.upstream_hit.longest_run_length},"
+                f"win={jv.upstream_hit.window_seq},"
+                f"range={jv.upstream_hit.window_start}-{jv.upstream_hit.window_end})"
+                f"|dn_hit={jv.downstream_hit.is_hit}"
+                f"(d={jv.downstream_hit.density:.2f},"
+                f"run={jv.downstream_hit.longest_run_length},"
+                f"win={jv.downstream_hit.window_seq},"
+                f"range={jv.downstream_hit.window_start}-{jv.downstream_hit.window_end})"
+                f"|artifact={jv.is_artifact}"
+                f"|filter={filter_status}"
+            )
+            details_parts.append(detail)
+
+        if chopped:
+            verdict_str = "RESCUED"
+        elif rv.is_artifact:
+            verdict_str = "FILTERED"
+        else:
+            verdict_str = "CLEAN"
+
+        return (
+            f"{rv.read_id}\t"
+            f"{verdict_str}\t"
+            f"{rv.n_junctions}\t"
+            f"{n_passed}\t"
+            f"{';'.join(details_parts)}\n"
+        )
 
     # ---- Phase 2: chop and write FASTQ ----
 
@@ -450,95 +518,6 @@ class ArtifactClassifier:
         )
         return report
 
-    # ---- Phase 3: write TSV report ----
-
-    def write_report(self, report: FilterReport) -> None:
-        """Write a per-read TSV report for downstream inspection.
-
-        Columns: read_id, verdict, n_junctions, n_artifact_junctions,
-                 junction_details (semicolon-separated).
-
-        The verdict column reflects the FINAL status after genomic-
-        coordinate filtering:
-            - RESCUED: read was actually chopped (artifact junctions
-              passed all filters).
-            - FILTERED: homopolymer signal detected but all artifact
-              junctions were skipped by genomic-coordinate filters
-              (non-standard contig or same-chrom <100kb).
-            - CLEAN: no homopolymer artifact signal detected.
-
-        Each junction's detail string includes a 'filter' field showing
-        whether that specific junction passed or was skipped.
-        """
-        logger.info(f"Writing report to {self.report_path}")
-
-        with open(self.report_path, "w") as fh:
-            header = (
-                "read_id\tverdict\tn_junctions\tn_artifact_junctions"
-                "\tjunction_details\n"
-            )
-            fh.write(header)
-
-            for rv in report.verdicts:
-                details_parts = []
-                n_passed = 0
-
-                for jv in rv.junction_verdicts:
-                    left = jv.junction.left_segment
-                    right = jv.junction.right_segment
-
-                    # Determine filter status for this junction
-                    if jv.is_artifact:
-                        passed = _is_valid_artifact_junction(
-                            left.chrom,
-                            left.ref_start,
-                            right.chrom,
-                            right.ref_start,
-                        )
-                        if passed:
-                            n_passed += 1
-                        filter_status = "PASS" if passed else "SKIPPED"
-                    else:
-                        filter_status = "NA"
-
-                    detail = (
-                        f"{left.chrom}:{left.ref_start}({left.strand})->"
-                        f"{right.chrom}:{right.ref_start}({right.strand})"
-                        f"|pos={jv.junction.read_position}"
-                        f"|source={jv.hit_source}"
-                        f"|up_hit={jv.upstream_hit.is_hit}"
-                        f"(d={jv.upstream_hit.density:.2f},"
-                        f"run={jv.upstream_hit.longest_run_length},"
-                        f"win={jv.upstream_hit.window_seq},"
-                        f"range={jv.upstream_hit.window_start}-{jv.upstream_hit.window_end})"
-                        f"|dn_hit={jv.downstream_hit.is_hit}"
-                        f"(d={jv.downstream_hit.density:.2f},"
-                        f"run={jv.downstream_hit.longest_run_length},"
-                        f"win={jv.downstream_hit.window_seq},"
-                        f"range={jv.downstream_hit.window_start}-{jv.downstream_hit.window_end})"
-                        f"|artifact={jv.is_artifact}"
-                        f"|filter={filter_status}"
-                    )
-                    details_parts.append(detail)
-
-                # Determine final verdict
-                if rv.read_id in report._chopped_read_ids:
-                    verdict_str = "RESCUED"
-                elif rv.is_artifact:
-                    # Had homopolymer signal but all junctions were filtered
-                    verdict_str = "FILTERED"
-                else:
-                    verdict_str = "CLEAN"
-
-                line = (
-                    f"{rv.read_id}\t"
-                    f"{verdict_str}\t"
-                    f"{rv.n_junctions}\t"
-                    f"{n_passed}\t"
-                    f"{';'.join(details_parts)}\n"
-                )
-                fh.write(line)
-
     # ---- Public entry point ----
 
     def run(self) -> FilterReport:
@@ -549,7 +528,6 @@ class ArtifactClassifier:
         """
         chop_map, report = self.scan_bam()
         report = self.rescue_fastq(chop_map, report)
-        self.write_report(report)
 
         logger.info("Homopolymer rescue complete.")
         logger.info(f"\n{report}")

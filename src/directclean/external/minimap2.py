@@ -1,8 +1,10 @@
 """
 Minimap2 alignment wrapper for DirectClean.
 
-Runs minimap2 with Direct-cDNA-optimised parameters and converts the
-SAM stream directly to an alignment-order BAM with samtools view.
+Builds or reuses a persistent splice-aware minimap2 index, then runs
+minimap2 with Direct-cDNA-optimised parameters and converts the SAM
+stream directly to an alignment-order BAM with samtools view.
+
 Coordinate sorting and BAM indexing are intentionally skipped because
 the downstream homopolymer classifier scans the complete BAM
 sequentially and does not perform genomic-region queries.
@@ -23,7 +25,9 @@ Typical usage::
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -58,6 +62,149 @@ def _check_binary(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Persistent reference index
+# ---------------------------------------------------------------------------
+
+
+_INDEX_SIGNATURE = "minimap2-splice-k14-w5-v1"
+
+
+def _default_index_cache_dir() -> Path:
+    """Return the persistent DirectClean minimap2 cache directory.
+
+    The location can be overridden with ``DIRECTCLEAN_CACHE_DIR``.
+    """
+    configured = os.environ.get("DIRECTCLEAN_CACHE_DIR")
+    if configured:
+        return Path(configured).expanduser() / "minimap2"
+    return Path.home() / ".cache" / "directclean" / "minimap2"
+
+
+def _reference_cache_key(reference: Path) -> str:
+    """Build a stable cache key for one reference file and index recipe."""
+    resolved = reference.resolve()
+    stat = resolved.stat()
+    payload = (
+        f"{resolved}\0{stat.st_size}\0{stat.st_mtime_ns}\0{_INDEX_SIGNATURE}"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
+
+
+def get_or_build_minimap2_index(
+    reference: str | Path,
+    threads: int = 1,
+    cache_dir: str | Path | None = None,
+) -> Path:
+    """Return a persistent splice-aware ``k=14`` minimap2 index.
+
+    A supplied ``.mmi`` is returned unchanged.  For a FASTA reference,
+    DirectClean stores the index in a user-writable persistent cache so
+    all samples and both alignment stages can reuse it.
+
+    The cache key includes the resolved reference path, file size,
+    modification time, and index recipe.  A changed reference therefore
+    receives a new index automatically.
+
+    Args:
+        reference: Reference FASTA or an existing ``.mmi`` index.
+        threads: Threads used while building a missing index.
+        cache_dir: Optional cache root.  Defaults to
+            ``$DIRECTCLEAN_CACHE_DIR/minimap2`` when configured, otherwise
+            ``~/.cache/directclean/minimap2``.
+
+    Returns:
+        Path to the existing or newly built ``.mmi`` file.
+
+    Raises:
+        FileNotFoundError: If the reference does not exist.
+        subprocess.CalledProcessError: If minimap2 index construction fails.
+        RuntimeError: If minimap2 reports success without producing an index.
+    """
+    reference = Path(reference).expanduser()
+    if not reference.exists():
+        raise FileNotFoundError(f"Reference not found: {reference}")
+
+    if reference.suffix == ".mmi":
+        if reference.stat().st_size == 0:
+            raise RuntimeError(f"Minimap2 index is empty: {reference}")
+        logger.info(f"Using supplied minimap2 index: {reference}")
+        return reference
+
+    cache_root = (
+        Path(cache_dir).expanduser()
+        if cache_dir is not None
+        else _default_index_cache_dir()
+    )
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    key = _reference_cache_key(reference)
+    safe_stem = reference.name.replace(os.sep, "_")
+    output_index = cache_root / f"{safe_stem}.{key}.splice_k14.mmi"
+
+    if output_index.exists() and output_index.stat().st_size > 0:
+        logger.info(f"Reusing persistent minimap2 index: {output_index}")
+        return output_index
+
+    minimap2_bin = _check_binary("minimap2")
+    temporary_index = output_index.with_name(
+        f".{output_index.name}.{os.getpid()}.tmp"
+    )
+    if temporary_index.exists():
+        temporary_index.unlink()
+
+    # The current mapping recipe is `-x splice -k14`.  The splice preset
+    # supplies w=5; k=14 overrides the preset's default k while preserving
+    # the same index-affecting settings used by both pipeline stages.
+    cmd = [
+        minimap2_bin,
+        "-x",
+        "splice",
+        "-k14",
+        "-t",
+        str(max(1, threads)),
+        "-d",
+        str(temporary_index),
+        str(reference),
+    ]
+
+    logger.info(f"Building persistent minimap2 index: {output_index}")
+    logger.info(f"[minimap2 index] {' '.join(cmd)}")
+
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if proc.stderr:
+        for line in proc.stderr.strip().splitlines():
+            logger.debug(f"  [minimap2 index] {line}")
+
+    if proc.returncode != 0:
+        if temporary_index.exists():
+            temporary_index.unlink()
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            cmd,
+            output=proc.stdout,
+            stderr=proc.stderr,
+        )
+
+    if not temporary_index.exists() or temporary_index.stat().st_size == 0:
+        raise RuntimeError(
+            "minimap2 reported a successful index build but no non-empty "
+            f"index was produced: {temporary_index}"
+        )
+
+    # Atomic within the same filesystem.  If another job completed the same
+    # cache entry first, replacing it with an equivalent index is harmless.
+    temporary_index.replace(output_index)
+    logger.info(f"Persistent minimap2 index ready: {output_index}")
+    return output_index
+
+
+# ---------------------------------------------------------------------------
 # Aligner class
 # ---------------------------------------------------------------------------
 
@@ -69,7 +216,7 @@ class Minimap2Aligner:
     protocol but can be overridden where needed.
 
     Args:
-        reference:    Path to the reference genome FASTA.
+        reference:    Path to the reference genome FASTA or prebuilt .mmi.
         threads:      Number of threads for minimap2 and samtools.
         extra_args:   Additional minimap2 arguments (list of strings).
         sample_id:    Sample name for the @RG read-group tag.
@@ -83,7 +230,6 @@ class Minimap2Aligner:
         "-uf",  # transcript on forward strand (Direct-cDNA protocol)
         "-k14",  # shorter kmer, better sensitivity for Nanopore error profile
         "--secondary=no",  # drop secondary alignments (we only need primary + suppl)
-        "--cs",  # cs tag for debugging / variant calling
     ]
 
     def __init__(
@@ -169,13 +315,21 @@ class Minimap2Aligner:
         return cmd
 
     def _build_samtools_view_cmd(self, output_bam: Path) -> list[str]:
-        """Construct the samtools view command for SAM-to-BAM conversion."""
+        """Construct the lightweight SAM-to-BAM conversion command.
+
+        Minimap2 is the main CPU consumer.  Samtools therefore uses at
+        most two compression threads and BAM compression level 1 for this
+        temporary alignment-order file.
+        """
+        samtools_threads = min(2, self.threads)
+
         return [
             "samtools",
             "view",
             "-@",
-            str(self.threads),
+            str(samtools_threads),
             "-b",
+            "-1",
             "-o",
             str(output_bam),
             "-",  # read SAM from stdin
