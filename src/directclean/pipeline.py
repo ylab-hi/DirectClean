@@ -14,8 +14,9 @@ Chains all five processing stages::
         Correct strand orientation → trim primers → 5'→3' reads
         │
         ▼
-    Stage 3: Rescuer
-        Detect internal TSO/RTP adapters → chop chimeric reads
+    Stage 3: Adapter Resolution
+        Detect adapter-associated structures → trim unsupported terminal
+        residuals or split TSO-supported internal concatemers
         │
         ▼
     Stage 4: Minimap2
@@ -27,8 +28,8 @@ Chains all five processing stages::
         │
         ▼
     Final outputs:
-        cleaned.fastq   — all reads passing stages 1-2, plus rescued
-                           sub-reads from stages 3 and 5
+        cleaned.fastq   — reads passing stages 1-2, plus usable records
+                           retained after stages 3 and 5
         rescued.fastq    — sub-reads rescued by homopolymer chopping
         reports/         — per-stage reports
 """
@@ -163,9 +164,11 @@ class DirectCleanPipeline:
     Stages 1-2 (Breakinator, Restrander) may **remove** reads that are
     definitively artifactual (foldback inversions, invalid primer configs).
 
-    Stages 3 and 5 (Rescuer, Homopolymer Rescue) never remove reads —
-    they **chop** chimeric reads at artifact junctions and rescue the
-    flanking sub-reads, increasing the effective read count.
+    Stage 3 resolves adapter-associated structures.  It trims an
+    unsupported terminal residual when the final no-TSO fragment is shorter
+    than its upstream neighbor, while preserving TSO-supported splits and
+    other length-qualified segments.  Stage 5 independently resolves
+    homopolymer-mediated RT template-switching junctions.
 
     Usage::
 
@@ -417,7 +420,7 @@ class DirectCleanPipeline:
     # ---- Stage 3: Rescue ----
 
     def _run_rescue(self, fastq: Path) -> tuple[Path, RescueReport]:
-        """Stage 3: detect and chop internal TSO/RTP adapters.
+        """Stage 3: resolve adapter-associated TSO/RTP structures.
 
         Args:
             fastq: Restranded FASTQ from Stage 2.
@@ -426,7 +429,7 @@ class DirectCleanPipeline:
             (output_fastq, report)
         """
         logger.info("=" * 55)
-        logger.info("Stage 3/5: Rescuer — internal adapter detection")
+        logger.info("Stage 3/5: Rescuer — adapter structure resolution")
         logger.info("=" * 55)
 
         worker_processes = max(1, self.config.threads - 1)
@@ -507,7 +510,7 @@ class DirectCleanPipeline:
             1. Breakinator: remove foldback inversion artifacts.
             2. Restrander: correct strand orientation, trim primers.
             2.5. Unknowns Rescue: recover oriented reads from unknowns.
-            3. Rescuer: chop reads with internal TSO/RTP adapters.
+            3. Rescuer: resolve adapter-associated structures.
             4. Minimap2: splice-aware alignment to reference.
             5. Homopolymer Rescue: chop RT template switching artifacts.
 

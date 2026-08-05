@@ -1,9 +1,10 @@
 """
-Internal adapter finder using anchor-and-extend strategy.
+Adapter-associated junction finder using anchor-and-extend strategy.
 
-Detects internal ``polyA → RTP_rc → TSO`` signatures in reads that
-indicate two cDNA molecules were ligated together.  Uses a tiered
-confidence system:
+Detects candidate ``polyA → RTP_rc → TSO``-related structures in reads.
+These signals identify positions that may require trimming or splitting, but
+signal count alone does not prove that both flanking fragments are independent
+cDNA molecules. Uses a tiered detection-confidence system:
 
 * **High confidence** (3/3): polyA + RTP_rc + TSO all found.
 * **Medium confidence** (2/3): any two of the three signals found.
@@ -59,13 +60,15 @@ class AdapterHit:
 
 @dataclass(frozen=True)
 class InternalJunction:
-    """A detected internal adapter junction — a candidate chop site.
+    """A detected adapter-associated junction — a candidate chop site.
 
     Attributes:
         chop_position: Where to cut the read (0-based).  This is the
                        start of the TSO if found, otherwise the end
                        of RTP_rc, otherwise the end of polyA.
-        confidence:    Number of signals found (1, 2, or 3).
+        confidence:    Number of signals found (1, 2, or 3). This is
+                       detection confidence, not proof that both sides are
+                       independent molecules.
         polya_hit:     The poly-A anchor hit, or None.
         rtp_rc_hit:    The RTP_rc hit, or None.
         tso_hit:       The TSO hit, or None.
@@ -287,7 +290,7 @@ def _search_all_tso(
 
 
 class AdapterFinder:
-    """Detect internal adapter junctions in Direct-cDNA reads.
+    """Detect candidate adapter-associated junctions in Direct-cDNA reads.
 
     Implements the anchor-and-extend strategy with tiered confidence:
 
@@ -316,7 +319,7 @@ class AdapterFinder:
             sequence: Full read sequence (5'→3', already restranded).
 
         Returns:
-            FinderResult with detected junctions.
+            FinderResult with candidate adapter-associated junctions.
         """
         cfg = self.config
         seq = sequence.upper()

@@ -146,7 +146,15 @@ class HtmlReportGenerator:
                 "reads_without": rc.reads_without,
                 "segments_rescued": rc.segments_rescued,
                 "segments_discarded": rc.segments_discarded,
+                "terminal_residuals_trimmed": rc.terminal_residuals_trimmed,
+                "tso_supported_junctions": rc.tso_supported_junctions,
+                "no_tso_junctions_retained": rc.no_tso_junctions_retained,
                 "total_segments": rc.total_segments,
+                "input_bases": rc.input_bases,
+                "output_bases": rc.output_bases,
+                "segments_discarded_bases": rc.segments_discarded_bases,
+                "terminal_residual_bases": rc.terminal_residual_bases,
+                "base_accounting_delta": rc.base_accounting_delta,
             }
 
         # -- Stage 5: Homopolymer Rescue --
@@ -528,7 +536,7 @@ body {
   <!-- Stage 3: Rescuer -->
   <div class="card" id="rescueCard" style="display:none">
     <div class="card-header" onclick="toggleCard(this)">
-      <h2>Stage 3: Rescuer <span class="badge badge-orange">Adapter Detection</span></h2>
+      <h2>Stage 3: Rescuer <span class="badge badge-orange">Adapter Resolution</span></h2>
       <span class="chevron">&#9660;</span>
     </div>
     <div class="card-body">
@@ -654,9 +662,9 @@ document.getElementById('headerMeta').innerHTML =
       '<div class="sub">Cleaned + rescued reads</div>' +
     '</div>' +
     '<div class="summary-card red">' +
-      '<div class="label">Net Change</div>' +
+      '<div class="label">Net Record Change</div>' +
       '<div class="value">' + fmt(totalRemoved > 0 ? -totalRemoved : '+' + Math.abs(totalRemoved)) + '</div>' +
-      '<div class="sub">Retention: ' + retentionPct + '</div>' +
+      '<div class="sub">Output/Input records: ' + retentionPct + '</div>' +
     '</div>' +
     '<div class="summary-card purple">' +
       '<div class="label">Processing Time</div>' +
@@ -959,18 +967,27 @@ document.getElementById('headerMeta').innerHTML =
   const t = document.getElementById('rescueTable');
   t.innerHTML =
     statsRow('Total reads processed', fmt(d.total_reads)) +
-    statsRow('Reads with internal adapter', fmt(d.reads_with_internal) + ' (' + pct(d.reads_with_internal, d.total_reads) + ')') +
+    statsRow('Reads with adapter-associated structure', fmt(d.reads_with_internal) + ' (' + pct(d.reads_with_internal, d.total_reads) + ')') +
     statsRow('Reads passed unchanged', fmt(d.reads_without)) +
+    statsRow('TSO-supported junctions', fmt(d.tso_supported_junctions)) +
+    statsRow('No-TSO junctions retained by guard', fmt(d.no_tso_junctions_retained)) +
     separatorRow() +
-    statsRow('Segments rescued', fmt(d.segments_rescued)) +
-    statsRow('Segments discarded', fmt(d.segments_discarded)) +
-    statsRow('Total output reads', fmt(d.total_segments));
+    statsRow('Segments retained', fmt(d.segments_rescued)) +
+    statsRow('Terminal residuals trimmed', fmt(d.terminal_residuals_trimmed)) +
+    statsRow('Short segments discarded', fmt(d.segments_discarded)) +
+    statsRow('Total output records', fmt(d.total_segments)) +
+    separatorRow() +
+    statsRow('Input bases', fmt(d.input_bases)) +
+    statsRow('Output bases', fmt(d.output_bases) + ' (' + pct(d.output_bases, d.input_bases) + ')') +
+    statsRow('Terminal-residual bases trimmed', fmt(d.terminal_residual_bases)) +
+    statsRow('Short-segment bases discarded', fmt(d.segments_discarded_bases)) +
+    statsRow('Base accounting delta', fmt(d.base_accounting_delta));
 
-  // Doughnut: adapter detection
+  // Doughnut: adapter-associated read detection
   new Chart(document.getElementById('rescueChart'), {
     type: 'doughnut',
     data: {
-      labels: ['With internal adapter', 'No adapter (unchanged)'],
+      labels: ['Adapter-associated structure', 'Passed unchanged'],
       datasets: [{
         data: [d.reads_with_internal, d.reads_without],
         backgroundColor: [C.orange, C.green],
@@ -980,7 +997,7 @@ document.getElementById('headerMeta').innerHTML =
     options: {
       responsive: true,
       plugins: {
-        title: { display: true, text: 'Internal Adapter Detection' },
+        title: { display: true, text: 'Adapter-Structure Resolution' },
         tooltip: {
           callbacks: { label: ctx => ctx.label + ': ' + fmt(ctx.raw) + ' (' + pct(ctx.raw, d.total_reads) + ')' }
         },
@@ -988,14 +1005,15 @@ document.getElementById('headerMeta').innerHTML =
     },
   });
 
-  // Bar: segments
+  // Bar: segment outcomes
   new Chart(document.getElementById('rescueBarChart'), {
     type: 'bar',
     data: {
       labels: ['Segments'],
       datasets: [
-        { label: 'Rescued', data: [d.segments_rescued], backgroundColor: C.greenA, borderRadius: 4 },
-        { label: 'Discarded', data: [d.segments_discarded], backgroundColor: C.redA, borderRadius: 4 },
+        { label: 'Retained', data: [d.segments_rescued], backgroundColor: C.greenA, borderRadius: 4 },
+        { label: 'Terminal residual trimmed', data: [d.terminal_residuals_trimmed], backgroundColor: C.orangeA, borderRadius: 4 },
+        { label: 'Too short', data: [d.segments_discarded], backgroundColor: C.redA, borderRadius: 4 },
       ],
     },
     options: {
@@ -1005,7 +1023,7 @@ document.getElementById('headerMeta').innerHTML =
         y: { stacked: true, display: false },
       },
       plugins: {
-        title: { display: true, text: 'Chopped Segment Outcome' },
+        title: { display: true, text: 'Resolved Segment Outcome' },
         tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + fmt(ctx.raw) } },
       },
     },
