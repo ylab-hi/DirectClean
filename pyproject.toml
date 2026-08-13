@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "directclean"
-version = "0.1.0"
+version = "1.1.0"
 description = "Strand orientation, artifact removal, and chimeric read rescue for ONT direct-cDNA, eliminates foldback inversions and homopolymer RT template switching artifacts"
 authors = ["Qingxiang Guo <qingxiang.guo@northwestern.edu>"]
 license = "MIT"
