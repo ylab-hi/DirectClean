@@ -285,18 +285,16 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   --text: #1e293b;
   --text-muted: #64748b;
   --border: #e2e8f0;
-  --primary: #2563eb;
-  --primary-light: #dbeafe;
-  --green: #16a34a;
-  --green-light: #dcfce7;
-  --red: #dc2626;
-  --red-light: #fee2e2;
-  --orange: #ea580c;
-  --orange-light: #fff7ed;
-  --purple: #7c3aed;
-  --purple-light: #f3e8ff;
-  --teal: #0d9488;
-  --teal-light: #ccfbf1;
+  --primary: #0072B2;
+  --primary-light: #DCEFF8;
+  --sky: #56B4E9;
+  --sky-light: #E4F4FB;
+  --orange: #E69F00;
+  --orange-light: #FFF2CC;
+  --purple: #CC79A7;
+  --purple-light: #F6E5EF;
+  --gray-accent: #6B7280;
+  --gray-accent-light: #F3F4F6;
   --radius: 10px;
   --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
   --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
@@ -341,8 +339,7 @@ body {
   box-shadow: var(--shadow);
   border-left: 4px solid var(--primary);
 }
-.summary-card.green  { border-left-color: var(--green); }
-.summary-card.red    { border-left-color: var(--red); }
+.summary-card.sky    { border-left-color: var(--sky); }
 .summary-card.orange { border-left-color: var(--orange); }
 .summary-card.purple { border-left-color: var(--purple); }
 .summary-card .label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
@@ -374,11 +371,10 @@ body {
   margin-left: 0.6rem;
 }
 .badge-blue   { background: var(--primary-light); color: var(--primary); }
-.badge-green  { background: var(--green-light); color: var(--green); }
-.badge-red    { background: var(--red-light); color: var(--red); }
-.badge-orange { background: var(--orange-light); color: var(--orange); }
-.badge-purple { background: var(--purple-light); color: var(--purple); }
-.badge-teal   { background: var(--teal-light); color: var(--teal); }
+.badge-sky    { background: var(--sky-light); color: #2B7FA8; }
+.badge-orange { background: var(--orange-light); color: #8A5F00; }
+.badge-purple { background: var(--purple-light); color: #8F4F78; }
+.badge-gray   { background: var(--gray-accent-light); color: var(--gray-accent); }
 
 .card-header .chevron {
   font-size: 0.8rem; color: var(--text-muted);
@@ -485,7 +481,7 @@ body {
   <!-- Stage 1: Breakinator -->
   <div class="card" id="breakCard" style="display:none">
     <div class="card-header" onclick="toggleCard(this)">
-      <h2>Stage 1: Breakinator <span class="badge badge-red">Foldback Removal</span></h2>
+      <h2>Stage 1: Breakinator <span class="badge badge-orange">Foldback Removal</span></h2>
       <span class="chevron">&#9660;</span>
     </div>
     <div class="card-body">
@@ -519,7 +515,7 @@ body {
   <!-- Stage 2.5: Unknowns Rescue -->
   <div class="card" id="unknownsCard" style="display:none">
     <div class="card-header" onclick="toggleCard(this)">
-      <h2>Stage 2.5: Unknowns Rescue <span class="badge badge-teal">Recovery</span></h2>
+      <h2>Stage 2.5: Unknowns Rescue <span class="badge badge-sky">Recovery</span></h2>
       <span class="chevron">&#9660;</span>
     </div>
     <div class="card-body">
@@ -553,7 +549,7 @@ body {
   <!-- Stage 5: Homopolymer Rescue -->
   <div class="card" id="filterCard" style="display:none">
     <div class="card-header" onclick="toggleCard(this)">
-      <h2>Stage 5: Homopolymer Rescue <span class="badge badge-green">RT Artifact Chopping</span></h2>
+      <h2>Stage 5: Homopolymer Rescue <span class="badge badge-blue">RT Artifact Chopping</span></h2>
       <span class="chevron">&#9660;</span>
     </div>
     <div class="card-body">
@@ -624,14 +620,12 @@ Chart.defaults.plugins.legend.labels.padding = 14;
 
 // Color palette
 const C = {
-  blue: '#2563eb', blueA: 'rgba(37,99,235,0.7)',
-  green: '#16a34a', greenA: 'rgba(22,163,74,0.7)',
-  red: '#dc2626', redA: 'rgba(220,38,38,0.7)',
-  orange: '#ea580c', orangeA: 'rgba(234,88,12,0.7)',
-  purple: '#7c3aed', purpleA: 'rgba(124,58,237,0.7)',
-  teal: '#0d9488', tealA: 'rgba(13,148,136,0.7)',
-  gray: '#94a3b8', grayA: 'rgba(148,163,184,0.7)',
-  yellow: '#ca8a04', yellowA: 'rgba(202,138,4,0.7)',
+  blue: '#0072B2', blueA: 'rgba(0,114,178,0.72)',
+  sky: '#56B4E9', skyA: 'rgba(86,180,233,0.72)',
+  orange: '#E69F00', orangeA: 'rgba(230,159,0,0.72)',
+  purple: '#CC79A7', purpleA: 'rgba(204,121,167,0.72)',
+  gray: '#999999', grayA: 'rgba(153,153,153,0.72)',
+  darkGray: '#4B5563', darkGrayA: 'rgba(75,85,99,0.72)',
 };
 
 // ---- Header ----
@@ -656,12 +650,12 @@ document.getElementById('headerMeta').innerHTML =
       '<div class="value">' + fmt(inputReads) + '</div>' +
       '<div class="sub">Raw FASTQ</div>' +
     '</div>' +
-    '<div class="summary-card green">' +
+    '<div class="summary-card sky">' +
       '<div class="label">Final Output</div>' +
       '<div class="value">' + fmt(outputReads) + '</div>' +
       '<div class="sub">Cleaned + rescued reads</div>' +
     '</div>' +
-    '<div class="summary-card red">' +
+    '<div class="summary-card orange">' +
       '<div class="label">Net Record Change</div>' +
       '<div class="value">' + fmt(totalRemoved > 0 ? -totalRemoved : '+' + Math.abs(totalRemoved)) + '</div>' +
       '<div class="sub">Output/Input records: ' + retentionPct + '</div>' +
@@ -696,13 +690,13 @@ document.getElementById('headerMeta').innerHTML =
       running += w.value;  // subtract
       bases.push(running);
       values.push(absVal);
-      bgColors.push(C.red);
+      bgColors.push(C.orange);
     } else {
       // gain
       bases.push(running);
       values.push(w.value);
       running += w.value;
-      bgColors.push(C.green);
+      bgColors.push(C.purple);
     }
   }
 
@@ -781,7 +775,7 @@ document.getElementById('headerMeta').innerHTML =
       labels: ['Foldback', 'Chimeric', 'Pass'],
       datasets: [{
         data: [d.foldback_count, d.chimeric_count, d.pass_count],
-        backgroundColor: [C.red, C.orange, C.green],
+        backgroundColor: [C.orange, C.purple, C.blue],
         borderWidth: 2, borderColor: '#fff',
       }],
     },
@@ -802,8 +796,8 @@ document.getElementById('headerMeta').innerHTML =
     data: {
       labels: ['Reads'],
       datasets: [
-        { label: 'Kept', data: [d.kept_reads], backgroundColor: C.greenA, borderRadius: 4 },
-        { label: 'Removed', data: [d.removed_reads], backgroundColor: C.redA, borderRadius: 4 },
+        { label: 'Kept', data: [d.kept_reads], backgroundColor: C.blueA, borderRadius: 4 },
+        { label: 'Removed', data: [d.removed_reads], backgroundColor: C.orangeA, borderRadius: 4 },
       ],
     },
     options: {
@@ -845,7 +839,7 @@ document.getElementById('headerMeta').innerHTML =
       labels: ['Forward (+)', 'Reverse (-)', 'Unknown (?)', 'RTP-RTP', 'TSO-TSO'],
       datasets: [{
         data: [d.forward, d.reverse, d.unknown, d.rtp_rtp, d.tso_tso],
-        backgroundColor: [C.green, C.blue, C.gray, C.red, C.orange],
+        backgroundColor: [C.blue, C.sky, C.gray, C.purple, C.orange],
         borderWidth: 2, borderColor: '#fff',
       }],
     },
@@ -866,10 +860,10 @@ document.getElementById('headerMeta').innerHTML =
     data: {
       labels: ['Reads'],
       datasets: [
-        { label: 'Forward', data: [d.forward], backgroundColor: C.greenA, borderRadius: 4 },
-        { label: 'Reverse', data: [d.reverse], backgroundColor: C.blueA, borderRadius: 4 },
+        { label: 'Forward', data: [d.forward], backgroundColor: C.blueA, borderRadius: 4 },
+        { label: 'Reverse', data: [d.reverse], backgroundColor: C.skyA, borderRadius: 4 },
         { label: 'Unknown', data: [d.unknown], backgroundColor: C.grayA, borderRadius: 4 },
-        { label: 'Artefacts', data: [d.total_artefacts], backgroundColor: C.redA, borderRadius: 4 },
+        { label: 'Artefacts', data: [d.total_artefacts], backgroundColor: C.purpleA, borderRadius: 4 },
       ],
     },
     options: {
@@ -913,7 +907,7 @@ document.getElementById('headerMeta').innerHTML =
       labels: ['Forward', 'Reverse (RC)', 'Unknown'],
       datasets: [{
         data: [d.oriented_forward, d.oriented_reverse, d.oriented_unknown],
-        backgroundColor: [C.green, C.blue, C.gray],
+        backgroundColor: [C.blue, C.sky, C.gray],
         borderWidth: 2, borderColor: '#fff',
       }],
     },
@@ -939,7 +933,7 @@ document.getElementById('headerMeta').innerHTML =
     data: {
       labels: ['Sub-reads'],
       datasets: [
-        { label: 'Output reads', data: [d.output_reads], backgroundColor: C.greenA, borderRadius: 4 },
+        { label: 'Output reads', data: [d.output_reads], backgroundColor: C.blueA, borderRadius: 4 },
         { label: 'Discarded (short)', data: [d.segments_discarded_short], backgroundColor: C.orangeA, borderRadius: 4 },
         { label: 'Orientation unknown', data: [d.oriented_unknown], backgroundColor: C.grayA, borderRadius: 4 },
       ],
@@ -990,7 +984,7 @@ document.getElementById('headerMeta').innerHTML =
       labels: ['Adapter-associated structure', 'Passed unchanged'],
       datasets: [{
         data: [d.reads_with_internal, d.reads_without],
-        backgroundColor: [C.orange, C.green],
+        backgroundColor: [C.orange, C.blue],
         borderWidth: 2, borderColor: '#fff',
       }],
     },
@@ -1011,9 +1005,9 @@ document.getElementById('headerMeta').innerHTML =
     data: {
       labels: ['Segments'],
       datasets: [
-        { label: 'Retained', data: [d.segments_rescued], backgroundColor: C.greenA, borderRadius: 4 },
+        { label: 'Retained', data: [d.segments_rescued], backgroundColor: C.blueA, borderRadius: 4 },
         { label: 'Terminal residual trimmed', data: [d.terminal_residuals_trimmed], backgroundColor: C.orangeA, borderRadius: 4 },
-        { label: 'Too short', data: [d.segments_discarded], backgroundColor: C.redA, borderRadius: 4 },
+        { label: 'Too short', data: [d.segments_discarded], backgroundColor: C.purpleA, borderRadius: 4 },
       ],
     },
     options: {
@@ -1058,7 +1052,7 @@ document.getElementById('headerMeta').innerHTML =
       labels: ['Artifact (chopped)', 'Clean chimeric'],
       datasets: [{
         data: [d.artifact_reads, d.clean_chimeric_reads],
-        backgroundColor: [C.red, C.green],
+        backgroundColor: [C.orange, C.blue],
         borderWidth: 2, borderColor: '#fff',
       }],
     },
@@ -1082,7 +1076,7 @@ document.getElementById('headerMeta').innerHTML =
         {
           label: 'Artifact / Rescued',
           data: [d.artifact_junctions, d.segments_rescued],
-          backgroundColor: C.redA,
+          backgroundColor: C.purpleA,
           borderRadius: 4,
         },
         {
@@ -1094,7 +1088,7 @@ document.getElementById('headerMeta').innerHTML =
         {
           label: 'Clean / N/A',
           data: [d.total_junctions - d.artifact_junctions - d.skipped_junctions, 0],
-          backgroundColor: C.greenA,
+          backgroundColor: C.blueA,
           borderRadius: 4,
         },
       ],
