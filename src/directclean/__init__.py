@@ -10,5 +10,5 @@ Typical CLI usage::
     directclean -i reads.fastq -r genome.fa -o results/ -t 8
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__ = "Qingxiang Guo"

@@ -44,18 +44,28 @@ The usual response is to discard the whole read. In PCR-free protocols every rea
 
 ```mermaid
 flowchart LR
-    A[Raw FASTQ] --> S1["Stage 1<br/>Foldback removal"]
-    S1 --> S2["Stage 2<br/>Orientation"]
-    S2 -->|oriented| S4["Stage 4<br/>Adapter rescue"]
-    S2 -->|unknowns| S3["Stage 3<br/>Unknowns rescue"]
-    S3 --> AL[minimap2]
+    A(["Raw FASTQ"]) --> S1["<b>Stage 1</b><br/>Foldback removal"]
+    S1 --> S2["<b>Stage 2</b><br/>Orientation"]
+    S2 -->|oriented| S4["<b>Stage 4</b><br/>Adapter rescue"]
+    S2 -->|unknowns| S3["<b>Stage 3</b><br/>Unknowns rescue"]
+    S3 --> AL{{"minimap2<br/>splice-aware"}}
     S4 --> AL
-    AL --> S5["Stage 5<br/>Homopolymer rescue"]
-    S5 --> OUT[Cleaned FASTQ]
+    AL --> S5["<b>Stage 5</b><br/>Homopolymer rescue"]
+    S5 --> OUT(["Cleaned FASTQ"])
 
-    style S3 stroke:#e8912d,stroke-width:2px
-    style S4 stroke:#3d9970,stroke-width:2px
-    style S5 stroke:#8e5bb5,stroke-width:2px
+    classDef io fill:#e8e8e8,stroke:#5a5a5a,stroke-width:2px,color:#1a1a1a
+    classDef base fill:#cfe2f3,stroke:#2e6da4,stroke-width:2px,color:#1a1a1a
+    classDef unk fill:#fce5cd,stroke:#c47d1a,stroke-width:2px,color:#1a1a1a
+    classDef adp fill:#d9ead3,stroke:#3d8b52,stroke-width:2px,color:#1a1a1a
+    classDef hom fill:#e6d5f2,stroke:#7b4fa3,stroke-width:2px,color:#1a1a1a
+    classDef algn fill:#fff2cc,stroke:#b8933a,stroke-width:2px,color:#1a1a1a
+
+    class A,OUT io
+    class S1,S2 base
+    class S3 unk
+    class S4 adp
+    class S5 hom
+    class AL algn
 ```
 
 | Stage | Tool / module | What it does |
@@ -67,6 +77,7 @@ flowchart LR
 | 5 | Homopolymer rescue | Detects A/T-rich RT template-switching junctions and splits chimeras |
 
 A read is only split when the junction is supported by sequence evidence; fragments below the minimum length are dropped. Stage 5 requires both A/T density ≥ 85% and a consecutive A/T run ≥ 5 bp within a 10 bp window, so non-A/T junctions, including real fusions, pass through untouched.
+
 
 ## Performance
 
