@@ -60,8 +60,8 @@ flowchart LR
 
 | Stage | Tool / module | What it does |
 | :--- | :--- | :--- |
-| 1 | Breakinator | Removes foldback inversion artifacts |
-| 2 | Restrander | Orients reads 5′→3′, removes aberrant primer configurations, sets aside unorientable reads |
+| 1 | [Breakinator](https://github.com/jheinz27/breakinator) | Removes foldback inversion artifacts |
+| 2 | [Restrander](https://github.com/mritchielab/restrander) | Orients reads 5′→3′, removes aberrant primer configurations, sets aside unorientable reads |
 | 3 | Unknowns rescue | Recovers orientable sub-reads from the unknowns pool via internal adapter detection |
 | 4 | Adapter rescue | Trims unsupported terminal residuals; splits supported internal concatemers |
 | 5 | Homopolymer rescue | Detects A/T-rich RT template-switching junctions and splits chimeras |
