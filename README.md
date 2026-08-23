@@ -1,260 +1,257 @@
+<p align="center">
+  <img src="assets/DirectClean_Logo.png" width="250" alt="DirectClean Logo">
+</p>
+
 # DirectClean
 
-**Artifact-aware preprocessing for Oxford Nanopore direct-cDNA
-sequencing**
+Strand orientation, artifact removal, and chimeric read rescue for Oxford Nanopore direct-cDNA sequencing.
 
-DirectClean is a preprocessing toolkit for ONT direct-cDNA sequencing
-reads. It integrates strand correction, artifact detection, and sequence
-rescue to improve recovery of usable transcript sequences for transcript
-discovery, isoform analysis, and fusion detection.
+DirectClean processes raw ONT direct-cDNA FASTQ files and produces clean, oriented reads for transcript quantification, isoform analysis, and gene fusion calling.
 
-Unlike conventional read filtering approaches that discard
-artifact-containing reads, DirectClean aims to preserve informative
-sequence by identifying artifact structures and applying targeted
-trimming, splitting, and rescue strategies.
+DirectClean removes foldback inversion reads, separates reads that cannot be reliably strand-oriented, trims terminal adapter residuals, resolves supported adapter concatemers, and rescues usable sequence from homopolymer-mediated reverse-transcription artifacts.
 
-------------------------------------------------------------------------
+## Quick start
 
-## Overview
+After installation:
 
-Oxford Nanopore direct-cDNA sequencing provides long transcript
-molecules but can contain multiple artifact classes introduced during
-library preparation and reverse transcription.
-
-DirectClean addresses these challenges through a multi-stage workflow:
-
-``` mermaid
-flowchart TD
-    A[Raw ONT direct-cDNA FASTQ] --> B[Stage 1<br/>Breakinator<br/>Foldback artifact detection]
-    B --> C[Stage 2<br/>Restrander<br/>Strand correction]
-    C --> D[Stage 3<br/>Unknowns Rescue<br/>Recover usable reads]
-    D --> E[Stage 4<br/>Adapter Rescue<br/>Remove adapters and split supported concatemers]
-    E --> F[Stage 5<br/>Homopolymer Rescue<br/>Resolve RT template-switch artifacts]
-    F --> G[Clean FASTQ<br/>Transcript and fusion analysis]
-```
-
-  -----------------------------------------------------------------------
-  Stage                   Component               Description
-  ----------------------- ----------------------- -----------------------
-  1                       Breakinator             Detects and removes
-                                                  foldback inversion
-                                                  artifacts
-
-  2                       Restrander              Corrects read
-                                                  orientation and
-                                                  identifies
-                                                  strand-related
-                                                  artifacts
-
-  3                       Unknowns Rescue         Recovers usable
-                                                  sequence from reads
-                                                  with unresolved
-                                                  classification
-
-  4                       Adapter Rescue          Removes
-                                                  adapter-associated
-                                                  artifacts and splits
-                                                  supported concatemer
-                                                  structures
-
-  5                       Homopolymer Rescue      Detects and resolves
-                                                  homopolymer-mediated RT
-                                                  template-switch
-                                                  artifacts
-  -----------------------------------------------------------------------
-
-------------------------------------------------------------------------
-
-# Installation
-
-## Recommended: Bioconda
-
-The recommended installation method is through Bioconda:
-
-``` bash
-mamba create -n directclean \
-    -c conda-forge \
-    -c bioconda \
-    directclean
-
-mamba activate directclean
-```
-
-Verify installation:
-
-``` bash
-directclean --help
-```
-
-DirectClean automatically installs required dependencies, including:
-
--   minimap2
--   samtools
--   breakinator
--   restrander
-
-------------------------------------------------------------------------
-
-# Quick usage
-
-Example:
-
-``` bash
+```bash
 directclean \
-    -i raw_reads.fastq \
-    -r genome.fa \
-    -o results \
-    -t 8 \
-    -j annotation.bed12
+  -i raw_reads.fastq \
+  -r genome.fa \
+  -o results/ \
+  -t 8 \
+  -j gencode.v41.bed12
 ```
 
-Main output:
+The primary output is:
 
-    results/
-    ├── directclean.cleaned.fastq
-    ├── directclean.report.html
-    └── intermediates/
+```text
+results/directclean.cleaned.fastq
+```
 
-The cleaned FASTQ can be directly used for downstream transcriptome
-analysis.
+An interactive HTML report is generated by default.
 
-------------------------------------------------------------------------
+## Performance on VCaP direct-cDNA data
 
-# Why DirectClean?
+Tested on 5.35 million reads from the VCaP prostate cancer cell line:
 
-[Pychopper](https://github.com/epi2me-labs/pychopper) is widely used for
-ONT direct-cDNA preprocessing, particularly for primer detection and
-strand orientation correction.
+| Metric | Pychopper | DirectClean |
+| :--- | :--- | :--- |
+| Output-record yield | 57.6% | **65.3%** |
+| Residual homopolymer-junction calls detected by DirectClean | 70,140 | **0** |
 
-DirectClean complements this functionality by addressing additional
-artifact classes generated during direct-cDNA sequencing and by rescuing
-usable sequence from artifact-containing reads.
+> **Interpreting read counts**
+>
+> DirectClean may trim or split reads while preserving usable transcript sequence. The number of output FASTQ records is therefore not equivalent to molecular retention. Use retained bases together with output-record yield when comparing runs or preprocessing tools.
 
-## Artifact classes addressed
+## Why DirectClean?
 
-  Capability                                                  Pychopper   DirectClean
-  ---------------------------------------------------------- ----------- -------------
-  Primer-based orientation                                        ✓            ✓
-  Strand correction                                               ✓            ✓
-  Foldback inversion artifact detection                          --            ✓
-  Adapter-associated concatemer resolution                       --            ✓
-  Homopolymer-mediated RT template-switch detection              --            ✓
-  Rescue of usable sequence from artifact-containing reads       --            ✓
+Oxford Nanopore's [Pychopper](https://github.com/epi2me-labs/pychopper) handles strand orientation and terminal-primer-based read rescue, but direct-cDNA library preparation introduces additional artifact types that require separate treatment.
 
-------------------------------------------------------------------------
+- **Foldback inversions:** the sequenced strand folds back on itself, producing a self-inverted chimeric read.
+- **Terminal and internal adapter structures:** adapter-associated sequence may represent a terminal residual or a supported concatemer junction. DirectClean trims unsupported terminal residuals and splits supported internal concatemers.
+- **Homopolymer-mediated RT template switching:** during reverse transcription, the RT enzyme detaches at an A/T-rich region on one RNA molecule and re-primes on another, joining unrelated transcripts into a single chimeric read. These events can generate false fusion candidates and affect isoform quantification.
+- **Unclassified reads:** some reads set aside by Restrander can still be recovered when their sub-reads contain enough sequence evidence for orientation.
 
-# Benchmark against Pychopper
+DirectClean integrates [Breakinator](https://github.com/jheinz27/breakinator) and [Restrander](https://github.com/mritchielab/restrander) with adapter- and homopolymer-aware rescue steps in a single workflow.
 
-DirectClean was evaluated on an ONT direct-cDNA dataset from VCaP
-prostate cancer cells.
+### Feature comparison
 
-  Metric                  Pychopper   DirectClean
-  --------------------- ----------- -------------
-  Input reads             5,348,910     5,348,910
-  Output-record yield         57.6%     **65.3%**
+| Capability | Pychopper | DirectClean |
+| :--- | :---: | :---: |
+| Strand orientation | ✅ | ✅ |
+| Internal adapter handling | Terminal-primer based | Terminal trimming and supported concatemer splitting |
+| Foldback inversion removal | ❌ | ✅ |
+| Homopolymer RT template-switching detection | ❌ | ✅ |
+| Rescue from unclassified reads | ❌ | ✅ |
 
-DirectClean recovered more output records while performing additional
-artifact-resolution steps.
+## Pipeline architecture
 
-Importantly, output-record yield alone does not define transcript
-retention. DirectClean performs artifact-aware trimming and splitting to
-preserve usable transcript sequence rather than simply retaining or
-discarding complete reads.
+| Stage | Name | What it does |
+| :--- | :--- | :--- |
+| 1 | Breakinator | Remove foldback inversion artifacts |
+| 2 | Restrander | Orient reads 5′→3′, remove RTP-RTP / TSO-TSO artifacts, and set aside unorientable reads |
+| 3 | Unknowns Rescue | Recover orientable sub-reads from Restrander unknowns through adapter detection and sequence-based orientation |
+| 4 | Adapter Rescue | Trim unsupported terminal adapter residuals and split supported internal concatemers in oriented reads |
+| 5 | Homopolymer Rescue | Detect homopolymer-mediated RT template-switching junctions and retain eligible flanking sub-reads |
 
-------------------------------------------------------------------------
+A splice-aware minimap2 alignment is performed between Adapter Rescue and Homopolymer Rescue so that chimeric genomic junctions can be evaluated.
 
-# Artifact resolution
+Stages 3–5 are designed to preserve usable transcript sequence rather than discard an entire read whenever an artifact junction is detected. Depending on the available evidence, DirectClean may trim a terminal adapter residual, split a supported concatemer, rescue orientable sub-reads, or discard fragments that are too short or lack sufficient evidence.
 
-## Foldback artifacts
+### How Adapter Rescue works
 
-Foldback structures can arise when a molecule contains inverted sequence
-copies caused by strand folding events.
+DirectClean searches oriented reads for adapter-associated structures using internal poly(A), RTP reverse-complement, and TSO signals.
 
-DirectClean uses Breakinator-based detection to identify and remove
-these artifacts before downstream analysis.
+A detected adapter structure is used as a chop point, but not every resulting fragment is automatically treated as an independent molecule.
 
-## Adapter-associated structures
+- A terminal segment without downstream TSO support can be trimmed as an adapter residual.
+- A TSO-supported internal junction can be split into independent sub-reads.
+- Eligible fragments must also pass the minimum segment-length requirement.
 
-Direct-cDNA reads may contain adapter-derived structures or
-concatemer-like artifacts.
+This prevents fixed-length terminal adapter sequence from being reported as a rescued transcript while retaining supported concatemer-derived sequence.
 
-DirectClean distinguishes these cases by:
+### How the homopolymer detector works
 
--   removing unsupported adapter sequence;
--   splitting supported internal concatemer junctions;
--   retaining resulting transcript fragments when sequence evidence
-    supports recovery.
+After splice-aware alignment, DirectClean identifies chimeric reads with supplementary alignments mapping to different genomic loci. For each chimeric junction, a 10 bp sliding window scans the flanking sequence on both sides.
 
-## Homopolymer-mediated RT template switching
+A junction is flagged as an RT template-switching artifact if any window satisfies both criteria:
 
-Reverse transcription template switching can generate artificial
-junctions associated with A/T-rich homopolymer regions.
+- A/T base density ≥ 85%
+- Longest consecutive A or T run ≥ 5 bp
 
-DirectClean identifies these events using sequence-context features and
-rescues supported subreads.
+Flagged reads are chopped at the artifact junction. Sub-reads ≥100 bp are written to the output; shorter fragments are discarded. Junctions involving non-standard contigs, including alt loci and unplaced scaffolds, are excluded through a standard-chromosome whitelist.
 
-------------------------------------------------------------------------
+## Installation
 
-# HTML report
+### Prerequisites
 
-DirectClean generates a self-contained interactive HTML report
-containing:
+DirectClean requires:
 
--   executive summary statistics;
--   read-flow waterfall visualization;
--   stage-specific classification summaries;
--   artifact-resolution statistics.
+- **conda or mamba** for environment management. [Miniforge](https://github.com/conda-forge/miniforge) is recommended.
+- **Poetry** for installing the DirectClean Python package. See the [Poetry installation guide](https://python-poetry.org/docs/#installation).
 
-This allows users to inspect processing outcomes without additional
-visualization software.
+### Install DirectClean
 
-------------------------------------------------------------------------
-
-# Output files
-
-Typical output structure:
-
-    results/
-    ├── directclean.cleaned.fastq
-    ├── directclean.report.html
-    ├── statistics/
-    └── intermediates/
-
-`directclean.cleaned.fastq` is recommended for:
-
--   transcript reconstruction;
--   isoform quantification;
--   fusion detection;
--   downstream long-read RNA analysis.
-
-------------------------------------------------------------------------
-
-# Developer installation
-
-For development or source installation:
-
-``` bash
+```bash
 git clone https://github.com/ylab-hi/DirectClean.git
 cd DirectClean
 
 mamba env create -f environment.yml
 mamba activate directclean
 
-pip install -e .
+poetry install
+directclean --help
 ```
 
-------------------------------------------------------------------------
+The conda environment installs the required external tools, including minimap2, samtools, Breakinator, and Restrander.
 
-# Citation
+### Install external tools separately
 
-If you use DirectClean, please cite:
+To install the external tools outside the provided environment:
 
--   DirectClean manuscript
--   Breakinator
--   Restrander
+```bash
+mamba install -c bioconda minimap2 samtools breakinator
+mamba install -c genomedk restrander
+```
 
-------------------------------------------------------------------------
+## Usage
 
-# License
+```bash
+directclean \
+  -i raw_reads.fastq \
+  -r genome.fa \
+  -o results/ \
+  -t 8 \
+  -j gencode.v41.bed12
+```
+
+The `-j` option provides a junction BED file for guided alignment. A GENCODE annotation in BED12 format is recommended.
+
+Run the following command for the full list of options:
+
+```bash
+directclean --help
+```
+
+### Key parameters
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `-i`, `--input` | required | Raw FASTQ from ONT direct-cDNA sequencing |
+| `-r`, `--reference` | required | Reference genome FASTA |
+| `-o`, `--output` | required | Output directory |
+| `-t`, `--threads` | 4 | Threads for minimap2, samtools, and Breakinator |
+| `-j`, `--junc-bed` | none | Junction BED12 file for guided alignment |
+| `--density-threshold` | 0.85 | A/T density threshold for homopolymer detection |
+| `--min-run` | 5 | Minimum consecutive A/T run length |
+| `--min-confidence` | 2 | Minimum number of adapter signals required for chopping |
+| `--context-window` | 50 | Bases flanking each junction for homopolymer scanning |
+| `--html-report`, `--no-html-report` | on | Generate or disable the interactive HTML report |
+
+## Output
+
+With the default prefix, DirectClean produces:
+
+```text
+results/
+├── directclean.cleaned.fastq
+├── directclean.rescued.fastq
+├── directclean.homopolymer_report.tsv
+├── directclean.report.html
+├── intermediates/
+│   ├── directclean.no_foldback.fastq
+│   ├── directclean.restranded.fastq
+│   ├── directclean.unknowns_rescued.fastq
+│   ├── directclean.rescued.fastq
+│   ├── directclean.merged.fastq
+│   └── directclean.aligned.bam
+└── reports/
+    └── directclean.rescue_report.tsv
+```
+
+### Main files
+
+- `directclean.cleaned.fastq`  
+  Final artifact-resolved FASTQ for downstream analysis.
+
+- `directclean.rescued.fastq`  
+  Sub-reads generated specifically during Stage 5 Homopolymer Rescue.
+
+- `directclean.homopolymer_report.tsv`  
+  Per-read classification of homopolymer-associated chimeric junctions.
+
+- `directclean.report.html`  
+  Interactive summary of pipeline statistics and read flow. Generated by default.
+
+- `reports/directclean.rescue_report.tsv`  
+  Per-read details from Stage 4 Adapter Rescue.
+
+### About the two `rescued.fastq` files
+
+The two files named `directclean.rescued.fastq` serve different purposes:
+
+- `intermediates/directclean.rescued.fastq` is the output of Stage 4 Adapter Rescue and contains the complete read set after adapter-structure handling.
+- The top-level `directclean.rescued.fastq` contains only sub-reads generated during Stage 5 Homopolymer Rescue.
+
+For transcript quantification, isoform analysis, and fusion calling, use:
+
+```text
+directclean.cleaned.fastq
+```
+
+## HTML report
+
+DirectClean generates an interactive HTML report with per-stage statistics and a read-flow visualization.
+
+<p align="center">
+  <img src="assets/html.png" width="800" alt="DirectClean HTML Report Preview">
+</p>
+
+Use `--no-html-report` to disable report generation.
+
+## Downstream analysis
+
+The final cleaned FASTQ can be used with long-read transcript analysis and fusion-calling tools, including:
+
+- [IsoQuant](https://github.com/ablab/IsoQuant)
+- [FLAIR](https://github.com/BrooksLabUCSC/flair)
+- [FusionSeeker](https://github.com/Maggi-Chen/FusionSeeker)
+- [JAFFAL](https://github.com/Oshlack/JAFFA/wiki/JAFFAL)
+
+## Citation
+
+If you use DirectClean in your research, please cite the DirectClean manuscript together with the foundational tools integrated into the pipeline:
+
+- **DirectClean:** Guo, Q., Li, Y., & Yang, R. (2026). DirectClean: a comprehensive preprocessing toolkit for Oxford Nanopore direct-cDNA sequencing. *Manuscript in preparation*.
+- **Breakinator:** Heinz, J. M., Meyerson, M., & Li, H. (2026). Detecting foldback artifacts in long reads. *BMC Genomics*.
+- **Restrander:** Schuster, J., Ritchie, M. E., & Gouil, Q. (2023). Restrander: rapid orientation and artefact removal for long-read cDNA data. *NAR Genomics and Bioinformatics*, 5(4), lqad108.
+
+## License
 
 MIT
+
+## Contact
+
+- Qingxiang Guo — qingxiang.guo@northwestern.edu
+- Rendong Yang Lab — https://github.com/ylab-hi
