@@ -1,16 +1,7 @@
 """
 External dependency checker for DirectClean.
 
-Validates that all required external binaries (minimap2, samtools,
-breakinator, restrander) are available on ``$PATH`` before the
-pipeline starts.
-
-For Breakinator, DirectClean also validates the required command-line
-capabilities. This is necessary because different Bioconda builds may
-share the same package version while providing incompatible interfaces.
-
-Fail-fast design: raises immediately with a clear message telling the
-user what is missing or incompatible and how to install it.
+Checks required external command-line tools before running the pipeline.
 """
 
 from __future__ import annotations
@@ -23,87 +14,61 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Registry of required tools
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class ExternalTool:
-    """Metadata for a required external binary.
-
-    Attributes:
-        name:            Binary name to search on PATH.
-        description:     One-line description shown in error messages.
-        install_hint:    How the user can install it.
-        required:        Whether the pipeline cannot run without it.
-    """
-
     name: str
     description: str
     install_hint: str
     required: bool = True
 
 
-# All tools DirectClean depends on
 REQUIRED_TOOLS: list[ExternalTool] = [
     ExternalTool(
         name="minimap2",
         description="Long-read splice-aware aligner",
-        install_hint="conda install -c bioconda minimap2",
+        install_hint=(
+            "mamba install -c conda-forge -c bioconda minimap2"
+        ),
     ),
     ExternalTool(
         name="samtools",
         description="SAM/BAM manipulation toolkit",
-        install_hint="conda install -c bioconda samtools",
+        install_hint=(
+            "mamba install -c conda-forge -c bioconda samtools"
+        ),
     ),
     ExternalTool(
         name="breakinator",
         description="Foldback / inversion artifact detector",
         install_hint=(
-            "mamba install -c bioconda "
-            "'breakinator=1.1.1=h067a5f5_1'"
+            "mamba install -c conda-forge -c bioconda "
+            "'breakinator=1.1.1=*_2'"
         ),
     ),
     ExternalTool(
         name="restrander",
         description="Direct-cDNA strand orientation corrector",
-        install_hint="conda install -c genomedk restrander",
+        install_hint=(
+            "mamba install -c conda-forge -c bioconda "
+            "'restrander=1.1.3=*_1'"
+        ),
     ),
 ]
 
 
-# ---------------------------------------------------------------------------
-# Breakinator compatibility
-# ---------------------------------------------------------------------------
-
-
 def check_breakinator_compatibility(binary: str) -> None:
-    """Verify that Breakinator provides the interface DirectClean requires.
+    """
+    Check that Breakinator provides the interface required by DirectClean.
 
-    DirectClean requires the Rust Breakinator implementation, which:
-
-    - accepts SAM/BAM/CRAM input;
-    - supports ``--threads``;
-    - supports ``--tabular``.
-
-    Compatibility is checked using the actual command-line capabilities,
-    rather than the reported version string. Different Conda builds may
-    share the same package version while exposing incompatible interfaces,
-    and the compatible binary may report a version string that differs
-    from the Conda package version.
-
-    Args:
-        binary: Absolute path to the Breakinator executable.
-
-    Raises:
-        RuntimeError: If Breakinator cannot be inspected or lacks one or
-            more capabilities required by DirectClean.
+    Required:
+      - SAM/BAM/CRAM input support
+      - --threads
+      - --tabular
     """
 
     install_command = (
-        "mamba install -c bioconda "
-        "'breakinator=1.1.1=h067a5f5_1'"
+        "mamba install -c conda-forge -c bioconda "
+        "'breakinator=1.1.1=*_2'"
     )
 
     try:
@@ -114,97 +79,65 @@ def check_breakinator_compatibility(binary: str) -> None:
             text=True,
             timeout=10,
         )
-    except subprocess.TimeoutExpired as exc:
+    except Exception as exc:
         raise RuntimeError(
-            "Timed out while checking the Breakinator installation.\n"
+            "Unable to inspect Breakinator installation.\n"
             f"Binary: {binary}\n\n"
-            "DirectClean requires the compatible Rust Breakinator build.\n"
-            "Install it with:\n"
-            f"    {install_command}"
-        ) from exc
-    except OSError as exc:
-        raise RuntimeError(
-            "Unable to inspect the Breakinator installation.\n"
-            f"Binary: {binary}\n"
-            f"Error: {exc}\n\n"
-            "DirectClean requires the compatible Rust Breakinator build.\n"
-            "Install it with:\n"
+            "Install the compatible Bioconda build with:\n"
             f"    {install_command}"
         ) from exc
 
     help_text = f"{proc.stdout}\n{proc.stderr}".lower()
 
-    required_capabilities = {
+    required = {
         "SAM/BAM/CRAM input support": "sam/bam/cram",
         "--threads option": "--threads",
         "--tabular option": "--tabular",
     }
 
-    missing_capabilities = [
-        description
-        for description, marker in required_capabilities.items()
+    missing = [
+        name for name, marker in required.items()
         if marker not in help_text
     ]
 
-    if proc.returncode != 0 or missing_capabilities:
-        missing_text = (
-            ", ".join(missing_capabilities)
-            if missing_capabilities
-            else "valid --help output"
-        )
+    if proc.returncode != 0 or missing:
+        missing_text = ", ".join(missing) if missing else "valid help output"
 
         raise RuntimeError(
             "An incompatible Breakinator installation was found.\n"
             f"Binary: {binary}\n"
             f"Missing capability: {missing_text}\n\n"
             "DirectClean requires the Rust Breakinator implementation "
-            "with SAM/BAM/CRAM input support and the --threads and "
-            "--tabular options.\n\n"
-            "Install the compatible Bioconda build with:\n"
+            "with SAM/BAM/CRAM input support and --threads/--tabular.\n\n"
+            "Install the compatible build with:\n"
             f"    {install_command}"
         )
 
-    logger.debug(f"  ✓ Breakinator interface is compatible: {binary}")
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+    logger.debug(
+        "Breakinator interface is compatible: %s",
+        binary,
+    )
 
 
 def check_binary(name: str) -> str:
-    """Check that a single binary is available on PATH.
-
-    Args:
-        name: Binary name (e.g. ``"minimap2"``).
-
-    Returns:
-        Absolute path to the binary.
-
-    Raises:
-        FileNotFoundError: If the binary is not found.
-    """
+    """Check that a binary exists on PATH."""
 
     path = shutil.which(name)
 
     if path is None:
         raise FileNotFoundError(
-            f"Required tool '{name}' not found on PATH. "
-            "Please install it first."
+            f"Required tool '{name}' not found on PATH."
         )
 
     return path
 
 
 def check_all_dependencies() -> dict[str, str]:
-    """Validate all required external tools are available and compatible.
+    """
+    Validate all DirectClean external dependencies.
 
     Returns:
-        Dictionary mapping tool name to absolute path.
-
-    Raises:
-        FileNotFoundError: Lists all missing tools.
-        RuntimeError: If Breakinator is installed but incompatible.
+        Mapping from tool name to executable path.
     """
 
     found: dict[str, str] = {}
@@ -213,30 +146,42 @@ def check_all_dependencies() -> dict[str, str]:
     for tool in REQUIRED_TOOLS:
         path = shutil.which(tool.name)
 
-        if path is not None:
+        if path:
             found[tool.name] = path
-            logger.debug(f"  ✓ {tool.name}: {path}")
+            logger.debug("%s: %s", tool.name, path)
         elif tool.required:
             missing.append(tool)
 
     if missing:
-        lines = ["The following required tools are missing:\n"]
+        lines = [
+            "The following required tools are missing:",
+            "",
+        ]
 
         for tool in missing:
-            lines.append(f"  • {tool.name} — {tool.description}")
-            lines.append(f"    Install: {tool.install_hint}\n")
+            lines.append(
+                f"  • {tool.name} — {tool.description}"
+            )
+            lines.append(
+                f"    Install: {tool.install_hint}"
+            )
+            lines.append("")
 
-        lines.append(
-            "Tip: use the provided environment.yml to install everything:\n"
-            "    mamba env create -f environment.yml"
+        lines.extend(
+            [
+                "For source installation, install dependencies with:",
+                "    mamba env create -f environment.yml",
+            ]
         )
 
         raise FileNotFoundError("\n".join(lines))
 
-    # Different Breakinator builds may share the same package version while
-    # exposing incompatible command-line interfaces. Check the real binary
-    # before any expensive pipeline stage begins.
-    check_breakinator_compatibility(found["breakinator"])
+    check_breakinator_compatibility(
+        found["breakinator"]
+    )
 
-    logger.info("All external dependencies found.")
+    logger.info(
+        "All external dependencies found."
+    )
+
     return found
