@@ -102,31 +102,45 @@ On VCaP, where the additional reads come from:
 
 Chimeric read rate on VCaP: 30.9% raw → 26.8% Pychopper → **16.9% DirectClean**.
 
+
 ## Installation
 
-### pip
+DirectClean is available through **Bioconda** and **PyPI**.
+
+### Bioconda (recommended)
+
+Bioconda installs DirectClean together with all required external tools.
 
 ```bash
-pip install directclean
-```
+mamba create -n directclean \
+  -c conda-forge \
+  -c bioconda \
+  directclean
 
-External tools (minimap2, samtools, breakinator, restrander) must be available on `PATH`.
-
-### Developer installation
-
-```bash
-git clone https://github.com/ylab-hi/DirectClean.git
-cd DirectClean
-mamba env create -f environment.yml
 mamba activate directclean
-pip install -e .
-```
+directclean --help
+````
 
-Verify with:
+### PyPI
+
+DirectClean can also be installed from PyPI. Because the pipeline requires native command-line tools, install these dependencies first:
 
 ```bash
+mamba create -n directclean-pip \
+  -c conda-forge \
+  -c bioconda \
+  "python>=3.10,<4" \
+  pip minimap2 samtools \
+  "breakinator=1.1.1=*_2" \
+  "restrander=1.1.3=*_1"
+
+mamba activate directclean-pip
+pip install directclean
 directclean --help
 ```
+
+For most users, the **Bioconda installation is recommended** because dependency management is handled automatically.
+
 
 ## Usage
 
