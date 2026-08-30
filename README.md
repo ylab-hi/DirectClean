@@ -3,10 +3,24 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/directclean/"><img src="https://img.shields.io/pypi/v/directclean.svg" alt="PyPI"></a>
-  <a href="https://pypi.org/project/directclean/"><img src="https://img.shields.io/pypi/pyversions/directclean.svg" alt="Python versions"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License: MIT"></a>
-  <a href="https://github.com/ylab-hi/DirectClean/issues"><img src="https://img.shields.io/github/issues/ylab-hi/DirectClean.svg" alt="Issues"></a>
+  <a href="https://pypi.org/project/directclean/">
+    <img src="https://img.shields.io/pypi/v/directclean.svg" alt="PyPI version">
+  </a>
+  <a href="https://bioconda.github.io/recipes/directclean/README.html">
+    <img src="https://img.shields.io/conda/vn/bioconda/directclean.svg" alt="Bioconda version">
+  </a>
+  <a href="https://anaconda.org/bioconda/directclean">
+    <img src="https://img.shields.io/conda/dn/bioconda/directclean.svg" alt="Bioconda downloads">
+  </a>
+  <a href="https://pepy.tech/projects/directclean">
+    <img src="https://api.pepy.tech/badge/directclean" alt="PyPI total downloads">
+  </a>
+  <a href="https://pypi.org/project/directclean/">
+    <img src="https://img.shields.io/pypi/dm/directclean.svg" alt="PyPI monthly downloads">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
+  </a>
 </p>
 
 # DirectClean
